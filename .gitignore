@@ -216,3 +216,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project release hygiene
+**/__pycache__/
+*.pyc
+.venv/
+*.db
+*.sqlite
+.vs/
+.idea/
+.vscode/
