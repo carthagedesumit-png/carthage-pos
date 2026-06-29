@@ -1,7 +1,9 @@
 import os
 
+from auth import AuthorizationError, UserSession, require_inventory_management
 from app.core.pos_engine import ShoppingCart, fetch_all_inventory, fetch_dashboard_metrics
-from app.database.db_manager import get_connection
+from app.inventory.inventory_service import adjust_stock
+from app.sales.sales_service import PAYMENT_CASH, create_sale
 
 
 def clear_screen():
@@ -22,61 +24,49 @@ def show_inventory():
     print("=" * 55)
 
 
-def commit_transaction(cart_data, cashier_name="System Admin"):
-    """Saves the completed transaction to the database and updates stock."""
-    if not cart_data["items"]:
-        raise ValueError("Cannot commit an empty transaction.")
-
-    with get_connection() as conn:
-        cursor = conn.cursor()
-
-        cursor.execute(
-            "INSERT INTO sales (cashier_name, subtotal, tax, total) VALUES (?, ?, ?, ?)",
-            (cashier_name, cart_data["subtotal"], cart_data["tax"], cart_data["grand_total"])
-        )
-        sale_id = cursor.lastrowid
-
-        for item in cart_data["items"]:
-            if item["quantity"] <= 0:
-                raise ValueError("Transaction quantities must be positive.")
-
-            cursor.execute(
-                "SELECT stock FROM inventory WHERE product_id = ?",
-                (item["product_id"],)
-            )
-            stock_row = cursor.fetchone()
-            if not stock_row:
-                raise ValueError(f"Product {item['product_id']} no longer exists.")
-            if stock_row["stock"] < item["quantity"]:
-                raise ValueError(f"Insufficient stock for {item['name']}.")
-
-            cursor.execute(
-                """INSERT INTO sale_items (sale_id, product_id, quantity, price_at_sale)
-                   VALUES (?, ?, ?, ?)""",
-                (sale_id, item["product_id"], item["quantity"], item["price"])
-            )
-            cursor.execute(
-                "UPDATE inventory SET stock = stock - ? WHERE product_id = ?",
-                (item["quantity"], item["product_id"])
-            )
-        conn.commit()
+def update_inventory_stock(session, product_id, stock):
+    """Role-protected inventory management operation."""
+    return adjust_stock(session, product_id, stock, notes="Manual terminal stock update")
 
 
-def print_receipt(cart_data):
+def commit_transaction(cart_data, session, payment_method=PAYMENT_CASH, amount_paid=None):
+    """Saves the completed transaction through the sales engine."""
+    if not isinstance(session, UserSession):
+        raise ValueError("A valid authenticated user session is required.")
+    if amount_paid is None:
+        amount_paid = cart_data["grand_total"]
+    sale_items = [
+        {"product_id": item["product_id"], "quantity": item["quantity"], "unit_price": item["price"]}
+        for item in cart_data["items"]
+    ]
+    return create_sale(
+        session,
+        sale_items,
+        payment_method=payment_method,
+        amount_paid=amount_paid,
+        tax_rate=0.075,
+    )
+
+
+def print_receipt(receipt_data):
     """Formats and prints an industry-standard invoice receipt."""
+    sale = receipt_data["sale"]
     clear_screen()
     print("\n" + "*" * 45)
     print(f"{'CARTHAGE SYSTEMS SUPERMARKET':^45}")
-    print(f"{'TERMINAL ENGINE v1.0':^45}")
+    print(f"{sale['receipt_number']:^45}")
     print("*" * 45)
     print(f"{'Item Description':<22} | {'Qty':<4} | {'Total':<12}")
     print("-" * 45)
-    for item in cart_data["items"]:
-        print(f"{item['name']:<22} | {item['quantity']:<4} | ${item['total']:<11.2f}")
+    for item in receipt_data["items"]:
+        print(f"{item['name']:<22} | {item['quantity']:<4} | ${item['line_total']:<11.2f}")
     print("-" * 45)
-    print(f"{'Subtotal:':<29} ${cart_data['subtotal']:.2f}")
-    print(f"{'VAT (7.5%):':<29} ${cart_data['tax']:.2f}")
-    print(f"{'Grand Total:':<29} ${cart_data['grand_total']:.2f}")
+    print(f"{'Subtotal:':<29} ${sale['subtotal']:.2f}")
+    print(f"{'Discount:':<29} ${sale['discount_amount']:.2f}")
+    print(f"{'Tax:':<29} ${sale['tax_amount']:.2f}")
+    print(f"{'Grand Total:':<29} ${sale['total_amount']:.2f}")
+    print(f"{'Paid:':<29} ${sale['amount_paid']:.2f}")
+    print(f"{'Change:':<29} ${sale['change_given']:.2f}")
     print("*" * 45)
     print(f"{'THANK YOU FOR YOUR PATRONAGE!':^45}")
     print("*" * 45 + "\n")
@@ -106,17 +96,23 @@ def show_dashboard():
     input("\nPress [Enter] to return to the main menu...")
 
 
-def run_pos_terminal(cashier_name="System Admin"):
+def run_pos_terminal(session):
     """Main terminal command execution loop."""
+    if not isinstance(session, UserSession):
+        raise ValueError("A valid authenticated user session is required.")
+
     cart = ShoppingCart()
 
     while True:
-        print("\n" + "=" * 65)
-        print(f" CARTHAGE INTERACTIVE TERMINAL | Station: 01 | Active Cashier: {cashier_name}")
-        print("=" * 65)
+        print("\n" + "=" * 72)
+        print(
+            " CARTHAGE INTERACTIVE TERMINAL | Station: 01 | "
+            f"Active Cashier: {session.username} | Role: {session.role}"
+        )
+        print("=" * 72)
         print("[1] View Live Stock  [2] Scan/Add Item  [3] View Cart & Checkout")
-        print("[4] Sales Dashboard  [5] Exit Engine")
-        print("-" * 65)
+        print("[4] Sales Dashboard  [5] Inventory Admin  [6] Exit Engine")
+        print("-" * 72)
 
         choice = input("Select operation code: ").strip()
 
@@ -144,17 +140,24 @@ def run_pos_terminal(cashier_name="System Admin"):
             confirm = input("\nProceed to Final Payment & Print Receipt? (yes/no): ").strip().lower()
             if confirm == "yes":
                 try:
-                    commit_transaction(cart_data, cashier_name=cashier_name)
+                    receipt_data = commit_transaction(cart_data, session=session)
                 except ValueError as exc:
                     print(f"Checkout failed: {exc}")
                     continue
-                print_receipt(cart_data)
+                print_receipt(receipt_data)
                 cart.clear()
             else:
                 print("Checkout hold. Returning to terminal.")
         elif choice == "4":
             show_dashboard()
         elif choice == "5":
+            try:
+                require_inventory_management(session)
+            except AuthorizationError as exc:
+                print(f"Access denied: {exc}")
+                continue
+            print("Inventory administration is authorized for this session.")
+        elif choice == "6":
             print("Shutting down core engine threads. Terminal offline.")
             break
         else:

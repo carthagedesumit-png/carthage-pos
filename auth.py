@@ -1,18 +1,53 @@
 import getpass
-import hashlib
-import hmac
 import os
+from dataclasses import dataclass
+from sqlite3 import IntegrityError
+
+import bcrypt
 
 from app.database.db_manager import get_connection
 
-HASH_NAME = "sha256"
-HASH_ITERATIONS = 260000
+ROLE_ADMIN = "admin"
+ROLE_MANAGER = "manager"
+ROLE_CASHIER = "cashier"
+VALID_ROLES = {ROLE_ADMIN, ROLE_MANAGER, ROLE_CASHIER}
+INVENTORY_ROLES = {ROLE_ADMIN, ROLE_MANAGER}
+USER_MANAGEMENT_ROLES = {ROLE_ADMIN}
+
+
+class AuthenticationError(Exception):
+    pass
+
+
+class AuthorizationError(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class UserSession:
+    user_id: int
+    username: str
+    full_name: str
+    role: str
+
+    def can_manage_users(self):
+        return self.role in USER_MANAGEMENT_ROLES
+
+    def can_manage_inventory(self):
+        return self.role in INVENTORY_ROLES
 
 
 class AuthenticationSystem:
     def __init__(self):
-        self.current_user = None
-        self.current_role = None
+        self.session = None
+
+    @property
+    def current_user(self):
+        return self.session.username if self.session else None
+
+    @property
+    def current_role(self):
+        return self.session.role if self.session else None
 
     def clear_screen(self):
         """Clears the terminal for a clean UI experience."""
@@ -29,46 +64,42 @@ class AuthenticationSystem:
     def ensure_default_users(self):
         """Creates first-run users only from environment-provided passwords."""
         configured_users = [
-            ("admin", os.environ.get("CARTHAGE_POS_ADMIN_PASSWORD"), "admin"),
-            ("cashier1", os.environ.get("CARTHAGE_POS_CASHIER_PASSWORD"), "cashier"),
+            ("admin", os.environ.get("CARTHAGE_POS_ADMIN_PASSWORD"), "System Administrator", ROLE_ADMIN),
+            ("manager1", os.environ.get("CARTHAGE_POS_MANAGER_PASSWORD"), "Store Manager", ROLE_MANAGER),
+            ("cashier1", os.environ.get("CARTHAGE_POS_CASHIER_PASSWORD"), "Cashier One", ROLE_CASHIER),
         ]
 
         with get_connection() as conn:
-            user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            user_count = conn.execute("SELECT COUNT(*) FROM users WHERE username != 'system'").fetchone()[0]
             if user_count > 0:
                 return
 
-            created = 0
-            for username, password, role in configured_users:
-                if not password:
-                    continue
-                conn.execute(
-                    """INSERT INTO users (username, password_hash, role)
-                       VALUES (?, ?, ?)""",
-                    (username, self.hash_password(password), role)
-                )
-                created += 1
+        created = 0
+        for username, password, full_name, role in configured_users:
+            if not password:
+                continue
+            create_user(username, password, full_name, role)
+            created += 1
 
         if created == 0:
             print("No POS users are configured yet.")
-            print("Set CARTHAGE_POS_ADMIN_PASSWORD or CARTHAGE_POS_CASHIER_PASSWORD before first login.")
+            print("Set CARTHAGE_POS_ADMIN_PASSWORD, CARTHAGE_POS_MANAGER_PASSWORD, or CARTHAGE_POS_CASHIER_PASSWORD before first login.")
 
     def login(self):
-        """Handles the cashier login loop."""
+        """Handles the cashier login loop and stores a user session."""
         self.ensure_default_users()
 
-        while not self.current_user:
+        while not self.session:
             self.display_login_header()
             print("\nPlease authenticate to access the terminal.")
 
             username = input("Username: ").strip()
             password = getpass.getpass("Password: ")
 
-            user = self.fetch_user(username)
-            if user and user["is_active"] and self.verify_password(password, user["password_hash"]):
-                self.current_user = username
-                self.current_role = user["role"]
-                print(f"\n[SUCCESS] Welcome back, {username}!")
+            session = authenticate_user(username, password)
+            if session:
+                self.session = session
+                print(f"\n[SUCCESS] Welcome back, {session.full_name}!")
                 input("\nPress Enter to launch the dashboard...")
                 return True
 
@@ -77,47 +108,129 @@ class AuthenticationSystem:
 
     def logout(self):
         """Logs out the current cashier."""
-        if self.current_user:
-            print(f"\nLogging out user: {self.current_user}...")
-            self.current_user = None
-            self.current_role = None
+        if self.session:
+            print(f"\nLogging out user: {self.session.username}...")
+            self.session = None
             input("Press Enter to return to login screen...")
 
-    @staticmethod
-    def hash_password(password):
-        salt = os.urandom(16)
-        digest = hashlib.pbkdf2_hmac(
-            HASH_NAME,
-            password.encode("utf-8"),
-            salt,
-            HASH_ITERATIONS
-        )
-        return f"pbkdf2_{HASH_NAME}${HASH_ITERATIONS}${salt.hex()}${digest.hex()}"
 
-    @staticmethod
-    def verify_password(password, stored_hash):
-        try:
-            algorithm, iterations, salt_hex, digest_hex = stored_hash.split("$", 3)
-            if algorithm != f"pbkdf2_{HASH_NAME}":
-                return False
-            candidate = hashlib.pbkdf2_hmac(
-                HASH_NAME,
-                password.encode("utf-8"),
-                bytes.fromhex(salt_hex),
-                int(iterations)
-            )
-            return hmac.compare_digest(candidate.hex(), digest_hex)
-        except (TypeError, ValueError):
-            return False
+def hash_password(password):
+    if not password:
+        raise ValueError("Password cannot be empty.")
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-    @staticmethod
-    def fetch_user(username):
+
+def verify_password(password, password_hash):
+    if not password or not password_hash or not password_hash.startswith("$2"):
+        return False
+    return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+
+
+def row_to_session(row):
+    return UserSession(
+        user_id=row["id"],
+        username=row["username"],
+        full_name=row["full_name"],
+        role=row["role"]
+    )
+
+
+def create_user(username, password, full_name, role=ROLE_CASHIER, acting_session=None):
+    if acting_session:
+        require_user_management(acting_session)
+    username = normalize_username(username)
+    validate_role(role)
+    if not full_name or not full_name.strip():
+        raise ValueError("Full name is required.")
+
+    try:
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT username, password_hash, role, is_active FROM users WHERE username = ?",
-                (username,)
-            ).fetchone()
-            return dict(row) if row else None
+            cursor = conn.execute(
+                """INSERT INTO users (username, password_hash, full_name, role, is_active)
+                   VALUES (?, ?, ?, ?, 1)""",
+                (username, hash_password(password), full_name.strip(), role)
+            )
+            user_id = cursor.lastrowid
+    except IntegrityError as exc:
+        raise ValueError(f"Username already exists: {username}") from exc
+
+    return get_user_by_id(user_id)
+
+
+def authenticate_user(username, password):
+    username = normalize_username(username)
+    with get_connection() as conn:
+        row = conn.execute(
+            """SELECT id, username, password_hash, full_name, role, is_active
+               FROM users WHERE username = ?""",
+            (username,)
+        ).fetchone()
+        if not row or not row["is_active"] or not verify_password(password, row["password_hash"]):
+            return None
+        conn.execute("UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
+        return row_to_session(row)
+
+
+def change_password(user_id, new_password, acting_session=None):
+    if acting_session and acting_session.user_id != user_id:
+        require_user_management(acting_session)
+    if not get_user_by_id(user_id):
+        raise ValueError("User does not exist.")
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (hash_password(new_password), user_id)
+        )
+
+
+def deactivate_user(user_id, acting_session=None):
+    if acting_session:
+        require_user_management(acting_session)
+    with get_connection() as conn:
+        cursor = conn.execute("UPDATE users SET is_active = 0 WHERE id = ?", (user_id,))
+        if cursor.rowcount == 0:
+            raise ValueError("User does not exist.")
+
+
+def reactivate_user(user_id, acting_session=None):
+    if acting_session:
+        require_user_management(acting_session)
+    with get_connection() as conn:
+        cursor = conn.execute("UPDATE users SET is_active = 1 WHERE id = ?", (user_id,))
+        if cursor.rowcount == 0:
+            raise ValueError("User does not exist.")
+
+
+def get_user_by_id(user_id):
+    with get_connection() as conn:
+        row = conn.execute(
+            """SELECT id, username, full_name, role, is_active, created_at, last_login
+               FROM users WHERE id = ?""",
+            (user_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def require_user_management(session):
+    if not session or not session.can_manage_users():
+        raise AuthorizationError("Only admin users can manage POS users.")
+
+
+def require_inventory_management(session):
+    if not session or not session.can_manage_inventory():
+        raise AuthorizationError("Only admin and manager users can manage inventory.")
+
+
+def normalize_username(username):
+    username = (username or "").strip().lower()
+    if not username:
+        raise ValueError("Username is required.")
+    return username
+
+
+def validate_role(role):
+    if role not in VALID_ROLES:
+        raise ValueError(f"Role must be one of: {', '.join(sorted(VALID_ROLES))}.")
 
 
 if __name__ == "__main__":

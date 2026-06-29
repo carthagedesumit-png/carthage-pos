@@ -18,16 +18,11 @@ class PosEngineTestCase(unittest.TestCase):
         os.environ.pop("CARTHAGE_POS_DB", None)
         os.unlink(self.db_file.name)
 
-    def create_cashier(self, username="cashier1"):
-        from app.database.db_manager import get_connection
-        from auth import AuthenticationSystem
+    def create_cashier_session(self):
+        from auth import authenticate_user, create_user
 
-        with get_connection() as conn:
-            conn.execute(
-                """INSERT INTO users (username, password_hash, role)
-                   VALUES (?, ?, ?)""",
-                (username, AuthenticationSystem.hash_password("test-password"), "cashier")
-            )
+        create_user("cashier1", "test-password", "Cashier One", "cashier")
+        return authenticate_user("cashier1", "test-password")
 
     def test_cart_rejects_non_positive_quantities(self):
         from app.core.pos_engine import ShoppingCart
@@ -47,27 +42,30 @@ class PosEngineTestCase(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertEqual(cart.items, {})
 
-    def test_checkout_records_cashier_and_decrements_stock(self):
+    def test_checkout_records_user_identity_and_decrements_stock(self):
         from app.core.pos_engine import ShoppingCart
         from app.database.db_manager import get_connection
         from app.ui.terminal_ui import commit_transaction
 
-        self.create_cashier()
+        session = self.create_cashier_session()
         cart = ShoppingCart()
         self.assertTrue(cart.add_item("1002", 2)["success"])
 
-        commit_transaction(cart.calculate_totals(), cashier_name="cashier1")
+        commit_transaction(cart.calculate_totals(), session=session)
 
         with get_connection() as conn:
             sale = conn.execute(
-                "SELECT cashier_name, total FROM sales ORDER BY sale_id DESC LIMIT 1"
+                """SELECT user_id, username, cashier_name, total
+                   FROM sales ORDER BY sale_id DESC LIMIT 1"""
             ).fetchone()
             stock = conn.execute(
                 "SELECT stock FROM inventory WHERE product_id = '1002'"
             ).fetchone()["stock"]
 
+        self.assertEqual(sale["user_id"], session.user_id)
+        self.assertEqual(sale["username"], "cashier1")
         self.assertEqual(sale["cashier_name"], "cashier1")
-        self.assertAlmostEqual(sale["total"], 183.825)
+        self.assertAlmostEqual(sale["total"], 183.83)
         self.assertEqual(stock, 22)
 
 

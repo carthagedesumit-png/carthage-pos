@@ -11,7 +11,7 @@ def bootstrap():
     if auth.login():
         print("Booting Carthage Systems POS Terminal Engine...")
         print("\n--- System Status: Online & Secure ---")
-        run_pos_terminal(cashier_name=auth.current_user)
+        run_pos_terminal(session=auth.session)
     else:
         print("\n[CRITICAL] System access denied. Shutting down.")
 
