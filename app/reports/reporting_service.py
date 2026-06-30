@@ -112,3 +112,64 @@ def get_sales_report(start_date, end_date):
         "total_tax": float(row["total_tax"]),
         "average_sale": float(row["average_sale"]),
     }
+
+
+def get_low_stock_products():
+    """
+    Returns products whose stock quantity is less than or equal
+    to their configured reorder level.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                id,
+                sku,
+                barcode,
+                name,
+                quantity_in_stock,
+                reorder_level
+            FROM products
+            WHERE quantity_in_stock <= reorder_level
+            ORDER BY quantity_in_stock ASC, name ASC
+            """
+        ).fetchall()
+
+    return [
+        {
+            "id": row["id"],
+            "sku": row["sku"],
+            "barcode": row["barcode"],
+            "name": row["name"],
+            "quantity_in_stock": row["quantity_in_stock"],
+            "reorder_level": row["reorder_level"],
+        }
+        for row in rows
+    ]
+
+
+def get_payment_method_report():
+    """
+    Returns sales grouped by payment method.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                payment_method,
+                COUNT(*) AS transaction_count,
+                COALESCE(SUM(total_amount), 0) AS total_sales
+            FROM sales
+            GROUP BY payment_method
+            ORDER BY total_sales DESC
+            """
+        ).fetchall()
+
+    return [
+        {
+            "payment_method": row["payment_method"],
+            "transaction_count": row["transaction_count"],
+            "total_sales": float(row["total_sales"]),
+        }
+        for row in rows
+    ]

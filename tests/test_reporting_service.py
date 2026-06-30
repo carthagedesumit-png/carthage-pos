@@ -168,7 +168,6 @@ class ReportingServiceTestCase(unittest.TestCase):
         products = get_top_selling_products()
 
         self.assertEqual(len(products), 2)
-
         self.assertEqual(products[0]["name"], "Notebook")
         self.assertEqual(products[0]["units_sold"], 5)
 
@@ -176,7 +175,7 @@ class ReportingServiceTestCase(unittest.TestCase):
         self.assertEqual(products[1]["units_sold"], 2)
 
     # ------------------------------------------------------------------
-    # NEW: Sales Report by Date Range
+    # Sales Report by Date Range
     # ------------------------------------------------------------------
 
     def test_sales_report_date_range_empty_database(self):
@@ -226,6 +225,117 @@ class ReportingServiceTestCase(unittest.TestCase):
         self.assertAlmostEqual(report["total_sales"], 60.0)
         self.assertAlmostEqual(report["total_tax"], 0.0)
         self.assertAlmostEqual(report["average_sale"], 60.0)
+
+    # ------------------------------------------------------------------
+    # Low Stock Report
+    # ------------------------------------------------------------------
+
+    def test_low_stock_products_empty_database(self):
+        from app.reports.reporting_service import get_low_stock_products
+
+        products = get_low_stock_products()
+
+        self.assertEqual(products, [])
+
+    def test_low_stock_products(self):
+        from auth import create_user, authenticate_user
+        from app.inventory.inventory_service import create_product
+        from app.reports.reporting_service import get_low_stock_products
+
+        create_user("manager", "password", "Manager", "manager")
+        manager = authenticate_user("manager", "password")
+
+        create_product(
+            manager,
+            sku="LOW-001",
+            barcode="LOW-001",
+            name="Notebook",
+            selling_price=20.0,
+            cost_price=10.0,
+            quantity_in_stock=3,
+            reorder_level=5,
+        )
+
+        create_product(
+            manager,
+            sku="HIGH-001",
+            barcode="HIGH-001",
+            name="Printer",
+            selling_price=300.0,
+            cost_price=250.0,
+            quantity_in_stock=25,
+            reorder_level=5,
+        )
+
+        products = get_low_stock_products()
+
+        self.assertEqual(len(products), 1)
+        self.assertEqual(products[0]["sku"], "LOW-001")
+        self.assertEqual(products[0]["quantity_in_stock"], 3)
+        self.assertEqual(products[0]["reorder_level"], 5)
+
+    # ------------------------------------------------------------------
+    # NEW: Sales by Payment Method Report
+    # ------------------------------------------------------------------
+
+    def test_payment_method_report_empty_database(self):
+        from app.reports.reporting_service import get_payment_method_report
+
+        report = get_payment_method_report()
+
+        self.assertEqual(report, [])
+
+    def test_payment_method_report_after_sales(self):
+        from auth import create_user, authenticate_user
+        from app.inventory.inventory_service import create_product
+        from app.sales.sales_service import (
+            create_sale,
+            PAYMENT_CARD,
+            PAYMENT_CASH,
+        )
+        from app.reports.reporting_service import get_payment_method_report
+
+        create_user("manager", "password", "Manager", "manager")
+        create_user("cashier", "password", "Cashier", "cashier")
+
+        manager = authenticate_user("manager", "password")
+        cashier = authenticate_user("cashier", "password")
+
+        product = create_product(
+            manager,
+            sku="PAY-001",
+            barcode="PAY-001",
+            name="Mouse",
+            selling_price=50.0,
+            cost_price=25.0,
+            quantity_in_stock=100,
+            reorder_level=10,
+        )
+
+        create_sale(
+            cashier,
+            [{"product_id": product["id"], "quantity": 2}],
+            payment_method=PAYMENT_CARD,
+        )
+
+        create_sale(
+            cashier,
+            [{"product_id": product["id"], "quantity": 1}],
+            payment_method=PAYMENT_CASH,
+			amount_paid=50.0,
+        )
+
+        report = get_payment_method_report()
+
+        self.assertEqual(len(report), 2)
+
+        methods = {item["payment_method"]: item for item in report}
+
+        self.assertEqual(methods[PAYMENT_CARD]["transaction_count"], 1)
+        self.assertAlmostEqual(methods[PAYMENT_CARD]["total_sales"], 100.0)
+
+        self.assertEqual(methods[PAYMENT_CASH]["transaction_count"], 1)
+        self.assertAlmostEqual(methods[PAYMENT_CASH]["total_sales"], 50.0)
 
 
 if __name__ == "__main__":
