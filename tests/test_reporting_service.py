@@ -224,7 +224,7 @@ class ReportingServiceTestCase(unittest.TestCase):
         self.assertEqual(products, [])
 
     def test_low_stock_products(self):
-        from app.inventory.inventory_service import create_product
+        from app.inventory.inventory_service import create_product, deactivate_product
         from app.reports.reporting_service import get_low_stock_products
 
         manager = self.sessions["manager"]
@@ -239,6 +239,17 @@ class ReportingServiceTestCase(unittest.TestCase):
             quantity_in_stock=3,
             reorder_level=5,
         )
+        inactive = create_product(
+            manager,
+            sku="LOW-INACTIVE",
+            barcode="LOW-INACTIVE",
+            name="Inactive Low Stock",
+            selling_price=10.0,
+            cost_price=5.0,
+            quantity_in_stock=0,
+            reorder_level=5,
+        )
+        deactivate_product(manager, inactive["id"])
 
         create_product(
             manager,
@@ -257,6 +268,7 @@ class ReportingServiceTestCase(unittest.TestCase):
         self.assertEqual(products[0]["sku"], "LOW-001")
         self.assertEqual(products[0]["quantity_in_stock"], 3)
         self.assertEqual(products[0]["reorder_level"], 5)
+        self.assertNotIn("LOW-INACTIVE", {item["sku"] for item in products})
 
     # ------------------------------------------------------------------
     # NEW: Sales by Payment Method Report
@@ -407,6 +419,184 @@ class ReportingServiceTestCase(unittest.TestCase):
         self.assertAlmostEqual(summary["total_sales"], 40.0)
         self.assertAlmostEqual(payment["total_sales"], 40.0)
         self.assertEqual(product_report["units_sold"], 2)
+
+    def test_v2_daily_and_date_range_reports_include_discounts_and_profit(self):
+        from app.inventory.inventory_service import create_product
+        from app.reports.reporting_service import (
+            get_daily_sales_report,
+            get_date_range_sales_report,
+        )
+        from app.sales.sales_service import DISCOUNT_FIXED, PAYMENT_CARD, create_sale
+
+        product = create_product(
+            self.sessions["manager"],
+            sku="V2-DATE",
+            barcode="V2-DATE",
+            name="Analytics Product",
+            selling_price=20.0,
+            cost_price=10.0,
+            quantity_in_stock=20,
+            reorder_level=2,
+        )
+        create_sale(
+            self.sessions["manager"],
+            [{"product_id": product["id"], "quantity": 3}],
+            payment_method=PAYMENT_CARD,
+            discount_type=DISCOUNT_FIXED,
+            discount_value=6,
+        )
+        today = date.today().isoformat()
+
+        daily = get_daily_sales_report(today)
+        period = get_date_range_sales_report(today, today)
+
+        for report in (daily, period):
+            self.assertAlmostEqual(report["gross_sales"], 60.0)
+            self.assertAlmostEqual(report["discount_total"], 6.0)
+            self.assertAlmostEqual(report["refund_total"], 0.0)
+            self.assertAlmostEqual(report["net_sales"], 54.0)
+            self.assertEqual(report["transaction_count"], 1)
+            self.assertEqual(report["items_sold"], 3)
+            self.assertAlmostEqual(report["estimated_profit"], 24.0)
+            self.assertAlmostEqual(report["average_transaction_value"], 54.0)
+            self.assertEqual(report["top_selling_products"][0]["sku"], "V2-DATE")
+
+    def test_v2_period_reports_reduce_revenue_profit_and_items_for_refunds(self):
+        from app.inventory.inventory_service import create_product
+        from app.reports.reporting_service import get_daily_sales_report, get_sales_report
+        from app.sales.sales_service import PAYMENT_CARD, create_sale, process_return
+
+        product = create_product(
+            self.sessions["manager"],
+            sku="V2-RETURN",
+            barcode="V2-RETURN",
+            name="Refund Analytics Product",
+            selling_price=20.0,
+            cost_price=10.0,
+            quantity_in_stock=20,
+            reorder_level=2,
+        )
+        receipt = create_sale(
+            self.sessions["cashier"],
+            [{"product_id": product["id"], "quantity": 4}],
+            payment_method=PAYMENT_CARD,
+        )
+        process_return(
+            self.sessions["manager"],
+            receipt["sale"]["sale_id"],
+            [{"sale_item_id": receipt["items"][0]["id"], "quantity": 1}],
+            "Analytics refund",
+        )
+        today = date.today().isoformat()
+
+        for report in (get_daily_sales_report(today), get_sales_report(today, today)):
+            self.assertAlmostEqual(report["gross_sales"], 80.0)
+            self.assertAlmostEqual(report["refund_total"], 20.0)
+            self.assertAlmostEqual(report["net_sales"], 60.0)
+            self.assertEqual(report["items_sold"], 3)
+            self.assertAlmostEqual(report["estimated_profit"], 30.0)
+            self.assertEqual(report["top_selling_products"][0]["items_sold"], 3)
+
+    def test_product_performance_rankings_exclude_inactive_products(self):
+        from app.inventory.inventory_service import create_product, deactivate_product
+        from app.reports.reporting_service import get_product_performance_report
+        from app.sales.sales_service import PAYMENT_CARD, create_sale
+
+        best = create_product(
+            self.sessions["manager"], sku="PERF-BEST", barcode="PERF-BEST",
+            name="Best Product", selling_price=20.0, cost_price=10.0,
+            quantity_in_stock=20, reorder_level=2,
+        )
+        create_product(
+            self.sessions["manager"], sku="PERF-SLOW", barcode="PERF-SLOW",
+            name="Slow Product", selling_price=5.0, cost_price=2.0,
+            quantity_in_stock=10, reorder_level=2,
+        )
+        inactive = create_product(
+            self.sessions["manager"], sku="PERF-OFF", barcode="PERF-OFF",
+            name="Inactive Product", selling_price=1.0, cost_price=0.0,
+            quantity_in_stock=1, reorder_level=2,
+        )
+        missing_cost = create_product(
+            self.sessions["manager"], sku="PERF-NOCOST", barcode="PERF-NOCOST",
+            name="Missing Cost Product", selling_price=30.0, cost_price=0.0,
+            quantity_in_stock=5, reorder_level=1,
+        )
+        deactivate_product(self.sessions["manager"], inactive["id"])
+        create_sale(
+            self.sessions["cashier"],
+            [{"product_id": best["id"], "quantity": 5},
+             {"product_id": missing_cost["id"], "quantity": 1}],
+            payment_method=PAYMENT_CARD,
+        )
+
+        report = get_product_performance_report(limit=10)
+
+        self.assertEqual(report["best_selling_products"][0]["sku"], "PERF-BEST")
+        self.assertEqual(report["highest_revenue_products"][0]["sku"], "PERF-BEST")
+        self.assertAlmostEqual(
+            next(item for item in report["highest_estimated_profit_products"]
+                 if item["sku"] == "PERF-NOCOST")["estimated_profit"],
+            30.0,
+        )
+        worst_skus = {item["sku"] for item in report["worst_selling_active_products"]}
+        slow_skus = {item["sku"] for item in report["slow_moving_products"]}
+        self.assertIn("PERF-SLOW", worst_skus)
+        self.assertIn("PERF-SLOW", slow_skus)
+        self.assertNotIn("PERF-OFF", worst_skus)
+        self.assertNotIn("PERF-OFF", slow_skus)
+
+    def test_cashier_performance_is_refund_and_discount_aware(self):
+        from app.inventory.inventory_service import create_product
+        from app.reports.reporting_service import get_cashier_performance_report
+        from app.sales.sales_service import (
+            DISCOUNT_FIXED,
+            PAYMENT_CARD,
+            create_sale,
+            process_return,
+        )
+
+        product = create_product(
+            self.sessions["manager"], sku="CASHIER-PERF", barcode="CASHIER-PERF",
+            name="Cashier Product", selling_price=20.0, cost_price=10.0,
+            quantity_in_stock=20, reorder_level=2,
+        )
+        first = create_sale(
+            self.sessions["cashier"],
+            [{"product_id": product["id"], "quantity": 2}],
+            payment_method=PAYMENT_CARD,
+        )
+        create_sale(
+            self.sessions["cashier"],
+            [{"product_id": product["id"], "quantity": 1}],
+            payment_method=PAYMENT_CARD,
+        )
+        create_sale(
+            self.sessions["manager"],
+            [{"product_id": product["id"], "quantity": 1}],
+            payment_method=PAYMENT_CARD,
+            discount_type=DISCOUNT_FIXED,
+            discount_value=5,
+        )
+        process_return(
+            self.sessions["manager"],
+            first["sale"]["sale_id"],
+            [{"sale_item_id": first["items"][0]["id"], "quantity": 1}],
+            "Cashier report refund",
+        )
+
+        rows = {row["username"]: row for row in get_cashier_performance_report()}
+        cashier = rows[self.sessions["cashier"].username]
+        manager = rows[self.sessions["manager"].username]
+
+        self.assertEqual(cashier["transaction_count"], 2)
+        self.assertAlmostEqual(cashier["gross_sales"], 60.0)
+        self.assertAlmostEqual(cashier["refunds"], 20.0)
+        self.assertAlmostEqual(cashier["net_sales"], 40.0)
+        self.assertEqual(cashier["items_sold"], 2)
+        self.assertAlmostEqual(cashier["estimated_profit"], 20.0)
+        self.assertAlmostEqual(cashier["average_transaction_value"], 20.0)
+        self.assertAlmostEqual(manager["discount_total"], 5.0)
 
 if __name__ == "__main__":
     unittest.main()
