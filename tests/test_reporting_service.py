@@ -337,6 +337,57 @@ class ReportingServiceTestCase(unittest.TestCase):
         self.assertEqual(methods[PAYMENT_CASH]["transaction_count"], 1)
         self.assertAlmostEqual(methods[PAYMENT_CASH]["total_sales"], 50.0)
 
+		    # ------------------------------------------------------------------
+    # NEW: Inventory Valuation Report
+    # ------------------------------------------------------------------
 
+    def test_inventory_valuation_empty_database(self):
+        from app.reports.reporting_service import get_inventory_valuation
+
+        report = get_inventory_valuation()
+
+        self.assertEqual(report["total_products"], 0)
+        self.assertEqual(report["total_units"], 0)
+        self.assertAlmostEqual(report["inventory_cost"], 0.0)
+        self.assertAlmostEqual(report["inventory_retail"], 0.0)
+        self.assertAlmostEqual(report["potential_profit"], 0.0)
+
+    def test_inventory_valuation_after_products(self):
+        from auth import create_user, authenticate_user
+        from app.inventory.inventory_service import create_product
+        from app.reports.reporting_service import get_inventory_valuation
+
+        create_user("manager", "password", "Manager", "manager")
+        manager = authenticate_user("manager", "password")
+
+        create_product(
+            manager,
+            sku="INV-001",
+            barcode="INV-001",
+            name="Notebook",
+            selling_price=20.0,
+            cost_price=10.0,
+            quantity_in_stock=5,
+            reorder_level=2,
+        )
+
+        create_product(
+            manager,
+            sku="INV-002",
+            barcode="INV-002",
+            name="Printer",
+            selling_price=300.0,
+            cost_price=250.0,
+            quantity_in_stock=2,
+            reorder_level=1,
+        )
+
+        report = get_inventory_valuation()
+
+        self.assertEqual(report["total_products"], 2)
+        self.assertEqual(report["total_units"], 7)
+        self.assertAlmostEqual(report["inventory_cost"], 550.0)
+        self.assertAlmostEqual(report["inventory_retail"], 700.0)
+        self.assertAlmostEqual(report["potential_profit"], 150.0)
 if __name__ == "__main__":
     unittest.main()

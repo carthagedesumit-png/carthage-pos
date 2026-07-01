@@ -173,3 +173,36 @@ def get_payment_method_report():
         }
         for row in rows
     ]
+
+def get_inventory_valuation():
+    """
+    Returns overall inventory valuation.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total_products,
+                COALESCE(SUM(quantity_in_stock), 0) AS total_units,
+                COALESCE(
+                    SUM(quantity_in_stock * cost_price),
+                    0
+                ) AS inventory_cost,
+                COALESCE(
+                    SUM(quantity_in_stock * selling_price),
+                    0
+                ) AS inventory_retail
+            FROM products
+            """
+        ).fetchone()
+
+    inventory_cost = float(row["inventory_cost"])
+    inventory_retail = float(row["inventory_retail"])
+
+    return {
+        "total_products": int(row["total_products"]),
+        "total_units": int(row["total_units"]),
+        "inventory_cost": inventory_cost,
+        "inventory_retail": inventory_retail,
+        "potential_profit": inventory_retail - inventory_cost,
+    }
