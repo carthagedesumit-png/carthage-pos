@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 
-from auth import UserSession
+from auth import AuthorizationError, INVENTORY_ROLES, validate_session
 from app.database.db_manager import get_connection
 from app.inventory.inventory_service import (
     MOVEMENT_RETURN,
@@ -35,7 +35,7 @@ def calculate_totals(items, discount_type=None, discount_value=0, tax_rate=0):
             product = get_product_by_id(product_id, conn=conn)
             if not product or not product["is_active"]:
                 raise ValueError("Product not found or inactive.")
-            unit_price = float(item.get("unit_price", product["selling_price"]))
+            unit_price = float(product["selling_price"])
             if unit_price < 0:
                 raise ValueError("Unit price cannot be negative.")
             line_total = unit_price * quantity
@@ -126,7 +126,9 @@ def create_sale(
     discount_value=0,
     tax_rate=0,
 ):
-    require_session(session)
+    session = require_session(session)
+    if discount_value and session.role not in INVENTORY_ROLES:
+        raise AuthorizationError("Only admin and manager users can apply sale discounts.")
     totals = calculate_totals(items, discount_type=discount_type, discount_value=discount_value, tax_rate=tax_rate)
     payment = process_payment(totals["total_amount"], payment_method, amount_paid)
 
@@ -191,7 +193,7 @@ def print_receipt_data(sale_id):
 
 
 def process_return(session, sale_id, return_items, reason):
-    require_session(session)
+    session = require_return_management(session)
     if not reason or not reason.strip():
         raise ValueError("Return reason is required.")
     if not return_items:
@@ -298,8 +300,15 @@ def validate_payment_method(payment_method):
 
 
 def require_session(session):
-    if not isinstance(session, UserSession):
-        raise ValueError("A valid authenticated user session is required.")
+    return validate_session(session)
+
+
+def require_return_management(session):
+    session = validate_session(session)
+    if session.role not in INVENTORY_ROLES:
+        raise AuthorizationError("Only admin and manager users can process returns.")
+    return session
+
 
 def money_round(value):
     return float(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))

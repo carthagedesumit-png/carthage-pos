@@ -10,14 +10,14 @@ class SalesServiceTestCase(unittest.TestCase):
         os.environ["CARTHAGE_POS_DB"] = self.db_file.name
 
         from app.database.db_manager import initialize_database
-        from auth import authenticate_user, create_user
+        from tests.support import bootstrap_staff
         from app.inventory.inventory_service import create_product
 
         initialize_database()
-        create_user("manager1", "manager-password", "Manager One", "manager")
-        create_user("cashier1", "cashier-password", "Cashier One", "cashier")
-        self.manager_session = authenticate_user("manager1", "manager-password")
-        self.cashier_session = authenticate_user("cashier1", "cashier-password")
+        sessions = bootstrap_staff()
+        self.admin_session = sessions["admin"]
+        self.manager_session = sessions["manager"]
+        self.cashier_session = sessions["cashier"]
         self.product = create_product(
             self.manager_session,
             sku="SALE-1",
@@ -168,6 +168,59 @@ class SalesServiceTestCase(unittest.TestCase):
                 self.cashier_session,
                 [{"product_id": self.product["id"], "quantity": 0}],
                 payment_method=PAYMENT_CARD,
+            )
+
+    def test_cashier_cannot_apply_discount(self):
+        from auth import AuthorizationError
+        from app.sales.sales_service import DISCOUNT_FIXED, PAYMENT_CARD, create_sale
+
+        with self.assertRaises(AuthorizationError):
+            create_sale(
+                self.cashier_session,
+                [{"product_id": self.product["id"], "quantity": 1}],
+                payment_method=PAYMENT_CARD,
+                discount_type=DISCOUNT_FIXED,
+                discount_value=5,
+            )
+
+    def test_caller_cannot_override_catalog_price(self):
+        from app.sales.sales_service import PAYMENT_CARD, create_sale
+
+        receipt = create_sale(
+            self.cashier_session,
+            [{"product_id": self.product["id"], "quantity": 1, "unit_price": 0.01}],
+            payment_method=PAYMENT_CARD,
+        )
+
+        self.assertAlmostEqual(receipt["sale"]["total_amount"], 20.0)
+
+    def test_deactivated_session_cannot_create_sale(self):
+        from auth import AuthorizationError, deactivate_user
+        from app.sales.sales_service import PAYMENT_CARD, create_sale
+
+        deactivate_user(self.cashier_session.user_id, acting_session=self.admin_session)
+        with self.assertRaises(AuthorizationError):
+            create_sale(
+                self.cashier_session,
+                [{"product_id": self.product["id"], "quantity": 1}],
+                payment_method=PAYMENT_CARD,
+            )
+
+    def test_cashier_cannot_process_return(self):
+        from auth import AuthorizationError
+        from app.sales.sales_service import PAYMENT_CARD, create_sale, process_return
+
+        receipt = create_sale(
+            self.cashier_session,
+            [{"product_id": self.product["id"], "quantity": 1}],
+            payment_method=PAYMENT_CARD,
+        )
+        with self.assertRaises(AuthorizationError):
+            process_return(
+                self.cashier_session,
+                receipt["sale"]["sale_id"],
+                [{"sale_item_id": receipt["items"][0]["id"], "quantity": 1}],
+                "Unauthorized return",
             )
 
 

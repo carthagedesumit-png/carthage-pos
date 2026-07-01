@@ -19,10 +19,9 @@ class PosEngineTestCase(unittest.TestCase):
         os.unlink(self.db_file.name)
 
     def create_cashier_session(self):
-        from auth import authenticate_user, create_user
+        from tests.support import bootstrap_staff
 
-        create_user("cashier1", "test-password", "Cashier One", "cashier")
-        return authenticate_user("cashier1", "test-password")
+        return bootstrap_staff(include_manager=False)["cashier"]
 
     def test_cart_rejects_non_positive_quantities(self):
         from app.core.pos_engine import ShoppingCart

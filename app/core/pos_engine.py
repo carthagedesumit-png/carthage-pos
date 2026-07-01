@@ -1,5 +1,5 @@
-from app.database.db_manager import get_connection
 from app.inventory.inventory_service import fetch_all_inventory_for_sale, fetch_product_for_sale
+from app.reports.reporting_service import get_sales_summary, get_top_selling_products
 
 
 def fetch_product(product_id):
@@ -77,31 +77,13 @@ class ShoppingCart:
 
 def fetch_dashboard_metrics():
     """Aggregates sales records from the database to generate business metrics."""
-    metrics = {
-        "total_revenue": 0.0,
-        "total_tax": 0.0,
-        "transaction_count": 0,
-        "top_items": []
+    summary = get_sales_summary()
+    return {
+        "total_revenue": summary["total_sales"],
+        "total_tax": summary["total_tax"],
+        "transaction_count": summary["transaction_count"],
+        "top_items": [
+            {"name": product["name"], "total_sold": product["units_sold"]}
+            for product in get_top_selling_products(limit=3)
+        ],
     }
-
-    with get_connection() as conn:
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT SUM(total) as rev, SUM(tax) as tx, COUNT(sale_id) as cnt FROM sales")
-        summary = cursor.fetchone()
-        if summary and summary["cnt"] > 0:
-            metrics["total_revenue"] = summary["rev"] or 0.0
-            metrics["total_tax"] = summary["tx"] or 0.0
-            metrics["transaction_count"] = summary["cnt"]
-
-        cursor.execute("""
-            SELECT p.name, SUM(si.quantity) as total_sold
-            FROM sale_items si
-            JOIN products p ON CAST(si.product_id AS INTEGER) = p.id
-            GROUP BY p.id
-            ORDER BY total_sold DESC
-            LIMIT 3
-        """)
-        metrics["top_items"] = [dict(row) for row in cursor.fetchall()]
-
-    return metrics

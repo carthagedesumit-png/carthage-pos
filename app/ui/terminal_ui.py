@@ -36,7 +36,7 @@ def commit_transaction(cart_data, session, payment_method=PAYMENT_CASH, amount_p
     if amount_paid is None:
         amount_paid = cart_data["grand_total"]
     sale_items = [
-        {"product_id": item["product_id"], "quantity": item["quantity"], "unit_price": item["price"]}
+        {"product_id": item["product_id"], "quantity": item["quantity"]}
         for item in cart_data["items"]
     ]
     return create_sale(

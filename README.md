@@ -6,8 +6,10 @@ Enterprise-grade supermarket POS terminal engine for inventory management and sa
 
 - Terminal-based cashier login and checkout flow
 - SQLite inventory, sales, and sale item storage
-- PBKDF2 password hashing for POS users
+- bcrypt password hashing for POS users
+- Database-backed admin, manager, and cashier authorization
 - Cashier-aware sales records
+- Refund-aware sales, payment, product, and inventory reports
 - Foreign-key enforcement for database integrity
 - Stock validation before cart add and checkout commit
 - Unit tests backed by isolated temporary databases
@@ -29,6 +31,8 @@ python main.py
 ```
 
 The application stores password hashes in the SQLite database. Do not commit `.env` files, runtime databases, or local IDE settings.
+
+Only the first administrator can be created through the bootstrap environment variable. After bootstrap, user management requires an active administrator session. Inventory changes and returns require an administrator or manager; cashier checkout always uses the catalog price.
 
 ## Run tests
 

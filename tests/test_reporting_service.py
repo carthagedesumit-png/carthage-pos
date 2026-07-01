@@ -13,8 +13,10 @@ class ReportingServiceTestCase(unittest.TestCase):
         os.environ["CARTHAGE_POS_DB"] = self.db_file.name
 
         from app.database.db_manager import initialize_database
+        from tests.support import bootstrap_staff
 
         initialize_database()
+        self.sessions = bootstrap_staff()
 
     def tearDown(self):
         os.environ.pop("CARTHAGE_POS_DB", None)
@@ -31,16 +33,12 @@ class ReportingServiceTestCase(unittest.TestCase):
         self.assertEqual(summary["average_sale"], 0.0)
 
     def test_sales_summary_after_single_sale(self):
-        from auth import create_user, authenticate_user
         from app.inventory.inventory_service import create_product
         from app.sales.sales_service import create_sale, PAYMENT_CARD
         from app.reports.reporting_service import get_sales_summary
 
-        create_user("manager", "password", "Manager", "manager")
-        create_user("cashier", "password", "Cashier", "cashier")
-
-        manager = authenticate_user("manager", "password")
-        cashier = authenticate_user("cashier", "password")
+        manager = self.sessions["manager"]
+        cashier = self.sessions["cashier"]
 
         product = create_product(
             manager,
@@ -77,16 +75,12 @@ class ReportingServiceTestCase(unittest.TestCase):
         self.assertAlmostEqual(report["average_sale"], 0.0)
 
     def test_daily_sales_report_after_sale(self):
-        from auth import create_user, authenticate_user
         from app.inventory.inventory_service import create_product
         from app.sales.sales_service import create_sale, PAYMENT_CARD
         from app.reports.reporting_service import get_daily_sales_report
 
-        create_user("manager", "password", "Manager", "manager")
-        create_user("cashier", "password", "Cashier", "cashier")
-
-        manager = authenticate_user("manager", "password")
-        cashier = authenticate_user("cashier", "password")
+        manager = self.sessions["manager"]
+        cashier = self.sessions["cashier"]
 
         product = create_product(
             manager,
@@ -120,16 +114,12 @@ class ReportingServiceTestCase(unittest.TestCase):
         self.assertEqual(products, [])
 
     def test_top_selling_products_after_sales(self):
-        from auth import create_user, authenticate_user
         from app.inventory.inventory_service import create_product
         from app.sales.sales_service import create_sale, PAYMENT_CARD
         from app.reports.reporting_service import get_top_selling_products
 
-        create_user("manager", "password", "Manager", "manager")
-        create_user("cashier", "password", "Cashier", "cashier")
-
-        manager = authenticate_user("manager", "password")
-        cashier = authenticate_user("cashier", "password")
+        manager = self.sessions["manager"]
+        cashier = self.sessions["cashier"]
 
         notebook = create_product(
             manager,
@@ -189,16 +179,12 @@ class ReportingServiceTestCase(unittest.TestCase):
         self.assertAlmostEqual(report["average_sale"], 0.0)
 
     def test_sales_report_date_range_after_sale(self):
-        from auth import create_user, authenticate_user
         from app.inventory.inventory_service import create_product
         from app.sales.sales_service import create_sale, PAYMENT_CARD
         from app.reports.reporting_service import get_sales_report
 
-        create_user("manager", "password", "Manager", "manager")
-        create_user("cashier", "password", "Cashier", "cashier")
-
-        manager = authenticate_user("manager", "password")
-        cashier = authenticate_user("cashier", "password")
+        manager = self.sessions["manager"]
+        cashier = self.sessions["cashier"]
 
         product = create_product(
             manager,
@@ -238,12 +224,10 @@ class ReportingServiceTestCase(unittest.TestCase):
         self.assertEqual(products, [])
 
     def test_low_stock_products(self):
-        from auth import create_user, authenticate_user
         from app.inventory.inventory_service import create_product
         from app.reports.reporting_service import get_low_stock_products
 
-        create_user("manager", "password", "Manager", "manager")
-        manager = authenticate_user("manager", "password")
+        manager = self.sessions["manager"]
 
         create_product(
             manager,
@@ -286,7 +270,6 @@ class ReportingServiceTestCase(unittest.TestCase):
         self.assertEqual(report, [])
 
     def test_payment_method_report_after_sales(self):
-        from auth import create_user, authenticate_user
         from app.inventory.inventory_service import create_product
         from app.sales.sales_service import (
             create_sale,
@@ -295,11 +278,8 @@ class ReportingServiceTestCase(unittest.TestCase):
         )
         from app.reports.reporting_service import get_payment_method_report
 
-        create_user("manager", "password", "Manager", "manager")
-        create_user("cashier", "password", "Cashier", "cashier")
-
-        manager = authenticate_user("manager", "password")
-        cashier = authenticate_user("cashier", "password")
+        manager = self.sessions["manager"]
+        cashier = self.sessions["cashier"]
 
         product = create_product(
             manager,
@@ -353,12 +333,10 @@ class ReportingServiceTestCase(unittest.TestCase):
         self.assertAlmostEqual(report["potential_profit"], 0.0)
 
     def test_inventory_valuation_after_products(self):
-        from auth import create_user, authenticate_user
         from app.inventory.inventory_service import create_product
         from app.reports.reporting_service import get_inventory_valuation
 
-        create_user("manager", "password", "Manager", "manager")
-        manager = authenticate_user("manager", "password")
+        manager = self.sessions["manager"]
 
         create_product(
             manager,
@@ -389,5 +367,46 @@ class ReportingServiceTestCase(unittest.TestCase):
         self.assertAlmostEqual(report["inventory_cost"], 550.0)
         self.assertAlmostEqual(report["inventory_retail"], 700.0)
         self.assertAlmostEqual(report["potential_profit"], 150.0)
+
+    def test_reports_subtract_recorded_returns(self):
+        from app.inventory.inventory_service import create_product
+        from app.reports.reporting_service import (
+            get_payment_method_report,
+            get_sales_summary,
+            get_top_selling_products,
+        )
+        from app.sales.sales_service import PAYMENT_CARD, create_sale, process_return
+
+        product = create_product(
+            self.sessions["manager"],
+            sku="RETURN-REPORT",
+            barcode="RETURN-REPORT",
+            name="Returnable Item",
+            selling_price=20.0,
+            cost_price=10.0,
+            quantity_in_stock=10,
+            reorder_level=2,
+        )
+        receipt = create_sale(
+            self.sessions["cashier"],
+            [{"product_id": product["id"], "quantity": 3}],
+            payment_method=PAYMENT_CARD,
+        )
+        process_return(
+            self.sessions["manager"],
+            receipt["sale"]["sale_id"],
+            [{"sale_item_id": receipt["items"][0]["id"], "quantity": 1}],
+            "Customer return",
+        )
+
+        summary = get_sales_summary()
+        payment = get_payment_method_report()[0]
+        product_report = get_top_selling_products()[0]
+        self.assertAlmostEqual(summary["gross_sales"], 60.0)
+        self.assertAlmostEqual(summary["total_refunds"], 20.0)
+        self.assertAlmostEqual(summary["total_sales"], 40.0)
+        self.assertAlmostEqual(payment["total_sales"], 40.0)
+        self.assertEqual(product_report["units_sold"], 2)
+
 if __name__ == "__main__":
     unittest.main()
