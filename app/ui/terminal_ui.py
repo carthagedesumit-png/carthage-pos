@@ -2,6 +2,7 @@ import os
 
 from auth import AuthorizationError, UserSession, require_inventory_management
 from app.core.pos_engine import ShoppingCart, fetch_all_inventory, fetch_dashboard_metrics
+from app.documents.document_service import generate_sales_receipt
 from app.inventory.inventory_service import adjust_stock
 from app.sales.sales_service import PAYMENT_CASH, create_sale
 
@@ -50,27 +51,10 @@ def commit_transaction(cart_data, session, payment_method=PAYMENT_CASH, amount_p
 
 
 def print_receipt(receipt_data):
-    """Formats and prints an industry-standard invoice receipt."""
-    sale = receipt_data["sale"]
+    """Print the document-engine thermal representation for a completed sale."""
     clear_screen()
-    print("\n" + "*" * 45)
-    print(f"{'CARTHAGE SYSTEMS SUPERMARKET':^45}")
-    print(f"{sale['receipt_number']:^45}")
-    print("*" * 45)
-    print(f"{'Item Description':<22} | {'Qty':<4} | {'Total':<12}")
-    print("-" * 45)
-    for item in receipt_data["items"]:
-        print(f"{item['name']:<22} | {item['quantity']:<4} | ${item['line_total']:<11.2f}")
-    print("-" * 45)
-    print(f"{'Subtotal:':<29} ${sale['subtotal']:.2f}")
-    print(f"{'Discount:':<29} ${sale['discount_amount']:.2f}")
-    print(f"{'Tax:':<29} ${sale['tax_amount']:.2f}")
-    print(f"{'Grand Total:':<29} ${sale['total_amount']:.2f}")
-    print(f"{'Paid:':<29} ${sale['amount_paid']:.2f}")
-    print(f"{'Change:':<29} ${sale['change_given']:.2f}")
-    print("*" * 45)
-    print(f"{'THANK YOU FOR YOUR PATRONAGE!':^45}")
-    print("*" * 45 + "\n")
+    document = generate_sales_receipt(receipt_data["sale"]["sale_id"], width_mm=80)
+    print(document["text"])
 
 
 def show_dashboard(store_id=None):

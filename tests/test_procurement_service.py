@@ -407,9 +407,23 @@ class ProcurementMigrationTestCase(unittest.TestCase):
                            WHERE type = 'table' AND name LIKE 'purchase_%'"""
                     ).fetchall()
                 }
+                migrated_inventory = conn.execute(
+                    """SELECT s.code, si.quantity_on_hand, si.reorder_level,
+                              si.average_cost
+                       FROM store_inventory si
+                       JOIN stores s ON s.id = si.store_id
+                       WHERE si.product_id = 1"""
+                ).fetchone()
+                system_home_store = conn.execute(
+                    "SELECT home_store_id FROM users WHERE username = 'system'"
+                ).fetchone()[0]
             self.assertEqual(row["quantity"], 2)
             self.assertAlmostEqual(row["price_at_sale"], 12.0)
             self.assertAlmostEqual(row["unit_cost_at_sale"], 7.0)
+            self.assertEqual(migrated_inventory["code"], "MAIN")
+            self.assertEqual(migrated_inventory["quantity_on_hand"], 3)
+            self.assertAlmostEqual(migrated_inventory["average_cost"], 7.0)
+            self.assertEqual(system_home_store, 1)
             self.assertEqual(
                 procurement_tables,
                 {
