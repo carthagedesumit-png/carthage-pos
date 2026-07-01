@@ -1,6 +1,7 @@
-import os
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Mapping, Optional
+
+from app.core.config import get_config
 
 
 @dataclass(frozen=True)
@@ -24,19 +25,16 @@ def load_branding(
     overrides: Optional[Mapping[str, Any]] = None,
 ) -> BrandingConfig:
     """Load branding from environment variables and optional request overrides."""
+    app_config = get_config()
     config = BrandingConfig(
-        business_name=os.environ.get("POS_BUSINESS_NAME", "Point of Sale"),
-        tax_id=os.environ.get("POS_TAX_ID", ""),
-        receipt_footer=os.environ.get(
-            "POS_RECEIPT_FOOTER", "Thank you for your business."
-        ),
-        invoice_footer=os.environ.get(
-            "POS_INVOICE_FOOTER", "Thank you for your business."
-        ),
-        logo_path=os.environ.get("POS_LOGO_PATH", ""),
-        address=os.environ.get("POS_BUSINESS_ADDRESS", ""),
-        phone=os.environ.get("POS_BUSINESS_PHONE", ""),
-        email=os.environ.get("POS_BUSINESS_EMAIL", ""),
+        business_name=app_config.company.name,
+        tax_id=app_config.company.tax_id,
+        receipt_footer=app_config.receipt.footer,
+        invoice_footer=app_config.receipt.invoice_footer,
+        logo_path=app_config.company.logo_path,
+        address=app_config.company.address,
+        phone=app_config.company.phone,
+        email=app_config.company.email,
     )
     if not overrides:
         return config

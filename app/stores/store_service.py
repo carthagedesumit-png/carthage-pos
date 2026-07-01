@@ -9,10 +9,15 @@ from auth import (
     require_user_management,
     validate_session,
 )
+from app.core.exceptions import StoreError
+from app.core.logging_utils import get_logger, log_event
+from app.core.validation import normalized_email, optional_text, required_text
 from app.database.db_manager import get_connection
+from app.database.transactions import transaction
 
 
 Store = dict[str, Any]
+logger = get_logger("stores")
 
 
 def create_store(
@@ -25,10 +30,10 @@ def create_store(
     manager_user_id: Optional[int] = None,
 ) -> Store:
     """Create an active store; only administrators may expand the company."""
-    require_user_management(session)
+    session = require_user_management(session)
     code = _required(code, "Store code").upper()
     name = _required(name, "Store name")
-    with get_connection() as conn:
+    with transaction() as conn:
         _validate_manager(conn, manager_user_id)
         try:
             cursor = conn.execute(
@@ -59,7 +64,8 @@ def create_store(
                     (manager_user_id, store_id),
                 )
         except IntegrityError as exc:
-            raise ValueError("Store code already exists.") from exc
+            raise StoreError("Store code already exists.") from exc
+    log_event(logger, "store_created", store_id=store_id, code=code, user_id=session.user_id)
     return get_store_by_id(store_id)
 
 
@@ -73,7 +79,7 @@ def update_store(session: Any, store_id: int, **updates: Any) -> Store:
     if not changes:
         store = get_store_by_id(store_id)
         if not store:
-            raise ValueError("Store not found.")
+            raise StoreError("Store not found.")
         return store
     if session.role != ROLE_ADMIN and ("code" in changes or "manager_user_id" in changes):
         raise AuthorizationError("Only administrators can change store codes or managers.")
@@ -87,9 +93,9 @@ def update_store(session: Any, store_id: int, **updates: Any) -> Store:
     if "email" in changes:
         changes["email"] = _normalize_email(changes["email"])
 
-    with get_connection() as conn:
+    with transaction() as conn:
         if not conn.execute("SELECT 1 FROM stores WHERE id = ?", (store_id,)).fetchone():
-            raise ValueError("Store not found.")
+            raise StoreError("Store not found.")
         if "manager_user_id" in changes:
             _validate_manager(conn, changes["manager_user_id"])
         assignments = ", ".join(f"{field} = ?" for field in changes)
@@ -104,36 +110,39 @@ def update_store(session: Any, store_id: int, **updates: Any) -> Store:
                     (changes["manager_user_id"], store_id),
                 )
         except IntegrityError as exc:
-            raise ValueError("Store code already exists.") from exc
+            raise StoreError("Store code already exists.") from exc
+    log_event(logger, "store_updated", store_id=store_id, user_id=session.user_id)
     return get_store_by_id(store_id)
 
 
 def deactivate_store(session: Any, store_id: int) -> Store:
     """Soft-deactivate a non-default store while retaining all history."""
-    require_user_management(session)
-    with get_connection() as conn:
+    session = require_user_management(session)
+    with transaction() as conn:
         store = conn.execute("SELECT code FROM stores WHERE id = ?", (store_id,)).fetchone()
         if not store:
-            raise ValueError("Store not found.")
+            raise StoreError("Store not found.")
         if store["code"].upper() == "MAIN":
-            raise ValueError("The default MAIN store cannot be deactivated.")
+            raise StoreError("The default MAIN store cannot be deactivated.")
         conn.execute(
             "UPDATE stores SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (store_id,),
         )
+    log_event(logger, "store_deactivated", store_id=store_id, user_id=session.user_id)
     return get_store_by_id(store_id)
 
 
 def reactivate_store(session: Any, store_id: int) -> Store:
     """Reactivate a historical store record."""
-    require_user_management(session)
-    with get_connection() as conn:
+    session = require_user_management(session)
+    with transaction() as conn:
         cursor = conn.execute(
             "UPDATE stores SET is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (store_id,),
         )
         if cursor.rowcount == 0:
-            raise ValueError("Store not found.")
+            raise StoreError("Store not found.")
+    log_event(logger, "store_reactivated", store_id=store_id, user_id=session.user_id)
     return get_store_by_id(store_id)
 
 
@@ -144,18 +153,18 @@ def assign_user_to_store(
     make_home: bool = False,
 ) -> dict[str, Any]:
     """Grant store access and optionally make it the user's home store."""
-    require_user_management(session)
-    with get_connection() as conn:
+    session = require_user_management(session)
+    with transaction() as conn:
         user = conn.execute("SELECT id, role FROM users WHERE id = ?", (user_id,)).fetchone()
         store = conn.execute(
             "SELECT id FROM stores WHERE id = ? AND is_active = 1", (store_id,)
         ).fetchone()
         if not user:
-            raise ValueError("User not found.")
+            raise StoreError("User not found.")
         if not store:
-            raise ValueError("Store not found or inactive.")
+            raise StoreError("Store not found or inactive.")
         if user["role"] == "cashier" and not make_home:
-            raise ValueError("Cashier assignment must set the cashier's home store.")
+            raise StoreError("Cashier assignment must set the cashier's home store.")
         conn.execute(
             "INSERT OR IGNORE INTO user_store_access (user_id, store_id) VALUES (?, ?)",
             (user_id, store_id),
@@ -167,6 +176,14 @@ def assign_user_to_store(
                     "DELETE FROM user_store_access WHERE user_id = ? AND store_id != ?",
                     (user_id, store_id),
                 )
+    log_event(
+        logger,
+        "user_store_assigned",
+        user_id=user_id,
+        store_id=store_id,
+        acting_user_id=session.user_id,
+        make_home=make_home,
+    )
     return get_user_store_assignment(user_id)
 
 
@@ -245,17 +262,12 @@ def _validate_manager(conn: Any, manager_user_id: Optional[int]) -> None:
 
 
 def _required(value: Any, label: str) -> str:
-    normalized = str(value or "").strip()
-    if not normalized:
-        raise ValueError(f"{label} is required.")
-    return normalized
+    return required_text(value, label, error_type=StoreError)
 
 
 def _optional(value: Any) -> Optional[str]:
-    normalized = str(value or "").strip()
-    return normalized or None
+    return optional_text(value)
 
 
 def _normalize_email(value: Any) -> Optional[str]:
-    normalized = _optional(value)
-    return normalized.lower() if normalized else None
+    return normalized_email(value)

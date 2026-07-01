@@ -1,11 +1,13 @@
-from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
-import math
 from sqlite3 import IntegrityError
 from typing import Any, Optional
 
 from auth import require_inventory_management, require_store_access
+from app.core.exceptions import ProcurementError
+from app.core.logging_utils import get_logger, log_event
+from app.core.validation import iso_date, non_negative_number, positive_int, required_text
 from app.database.db_manager import get_connection
+from app.database.transactions import transaction
 from app.inventory.inventory_service import (
     MOVEMENT_PURCHASE,
     ensure_store_inventory,
@@ -22,6 +24,7 @@ STATUS_FULLY_RECEIVED = "FULLY_RECEIVED"
 STATUS_CANCELLED = "CANCELLED"
 RECEIVABLE_STATUSES = {STATUS_SUBMITTED, STATUS_PARTIALLY_RECEIVED}
 PurchaseOrder = dict[str, Any]
+logger = get_logger("procurement")
 
 
 def create_purchase_order(
@@ -40,17 +43,17 @@ def create_purchase_order(
     reference_number = _required(reference_number, "Reference number")
     expected_delivery_date = _normalize_optional_date(expected_delivery_date)
     if not line_items:
-        raise ValueError("Purchase order must contain at least one line item.")
+        raise ProcurementError("Purchase order must contain at least one line item.")
 
     try:
-        with get_connection() as conn:
+        with transaction() as conn:
             supplier = conn.execute(
                 "SELECT id, is_active FROM suppliers WHERE id = ?", (supplier_id,)
             ).fetchone()
             if not supplier:
-                raise ValueError("Supplier not found.")
+                raise ProcurementError("Supplier not found.")
             if not supplier["is_active"]:
-                raise ValueError("Inactive suppliers cannot be used for new purchase orders.")
+                raise ProcurementError("Inactive suppliers cannot be used for new purchase orders.")
 
             prepared_items = _prepare_order_items(conn, line_items)
             cursor = conn.execute(
@@ -86,19 +89,28 @@ def create_purchase_order(
                 ],
             )
     except IntegrityError as exc:
-        raise ValueError("Purchase order reference or product line already exists.") from exc
+        raise ProcurementError("Purchase order reference or product line already exists.") from exc
+    log_event(
+        logger,
+        "purchase_order_created",
+        purchase_order_id=purchase_order_id,
+        reference_number=reference_number,
+        store_id=store_id,
+        supplier_id=supplier_id,
+        user_id=session.user_id,
+    )
     return get_purchase_order(purchase_order_id)
 
 
 def submit_purchase_order(session: Any, purchase_order_id: int) -> PurchaseOrder:
     """Move a draft purchase order into the receivable workflow."""
     session = require_inventory_management(session)
-    with get_connection() as conn:
+    with transaction() as conn:
         order = conn.execute(
             "SELECT store_id FROM purchase_orders WHERE id = ?", (purchase_order_id,)
         ).fetchone()
         if not order:
-            raise ValueError("Purchase order not found.")
+            raise ProcurementError("Purchase order not found.")
         require_store_access(session, order["store_id"], manage=True)
         cursor = conn.execute(
             """UPDATE purchase_orders
@@ -114,12 +126,12 @@ def submit_purchase_order(session: Any, purchase_order_id: int) -> PurchaseOrder
 def cancel_purchase_order(session: Any, purchase_order_id: int) -> PurchaseOrder:
     """Cancel an unreceived draft or submitted purchase order."""
     session = require_inventory_management(session)
-    with get_connection() as conn:
+    with transaction() as conn:
         order = conn.execute(
             "SELECT store_id FROM purchase_orders WHERE id = ?", (purchase_order_id,)
         ).fetchone()
         if not order:
-            raise ValueError("Purchase order not found.")
+            raise ProcurementError("Purchase order not found.")
         require_store_access(session, order["store_id"], manage=True)
         cursor = conn.execute(
             """UPDATE purchase_orders
@@ -141,10 +153,9 @@ def receive_purchase_order(
     """Receive one delivery atomically and update moving-average product cost."""
     session = require_inventory_management(session)
     if not line_items:
-        raise ValueError("Receipt must contain at least one line item.")
+        raise ProcurementError("Receipt must contain at least one line item.")
 
-    with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+    with transaction() as conn:
         purchase_order = conn.execute(
             """SELECT po.*, s.is_active AS supplier_is_active
                FROM purchase_orders po
@@ -153,9 +164,9 @@ def receive_purchase_order(
             (purchase_order_id,),
         ).fetchone()
         if not purchase_order:
-            raise ValueError("Purchase order not found.")
+            raise ProcurementError("Purchase order not found.")
         if purchase_order["status"] not in RECEIVABLE_STATUSES:
-            raise ValueError("Purchase order is not open for receiving.")
+            raise ProcurementError("Purchase order is not open for receiving.")
         session = require_store_access(
             session, purchase_order["store_id"], manage=True
         )
@@ -248,6 +259,16 @@ def receive_purchase_order(
             "UPDATE purchase_orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (status, purchase_order_id),
         )
+    log_event(
+        logger,
+        "purchase_order_received",
+        purchase_order_id=purchase_order_id,
+        receipt_id=receipt_id,
+        receipt_number=receipt_number,
+        store_id=purchase_order["store_id"],
+        user_id=session.user_id,
+        status=status,
+    )
     return get_purchase_receipt(receipt_id)
 
 
@@ -433,42 +454,25 @@ def _average_cost(
 
 
 def _normalize_optional_date(value: Optional[str]) -> Optional[str]:
-    if value is None or not str(value).strip():
-        return None
-    try:
-        return date.fromisoformat(str(value).strip()).isoformat()
-    except ValueError as exc:
-        raise ValueError("Expected delivery date must use YYYY-MM-DD format.") from exc
+    return iso_date(
+        value,
+        "Expected delivery date",
+        error_type=ProcurementError,
+    )
 
 
 def _positive_quantity(value: Any) -> int:
-    if isinstance(value, bool):
-        raise ValueError("Quantity must be a positive whole number.")
-    try:
-        quantity = int(value)
-        numeric_value = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("Quantity must be a positive whole number.") from exc
-    if not math.isfinite(numeric_value) or quantity <= 0 or quantity != numeric_value:
-        raise ValueError("Quantity must be a positive whole number.")
-    return quantity
+    return positive_int(value, error_type=ProcurementError)
 
 
 def _non_negative_cost(value: Any) -> float:
-    try:
-        cost = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("Unit cost must be a non-negative number.") from exc
-    if not math.isfinite(cost) or cost < 0:
-        raise ValueError("Unit cost must be a non-negative number.")
-    return _cost(cost)
+    return _cost(
+        non_negative_number(value, "Unit cost", error_type=ProcurementError)
+    )
 
 
 def _required(value: Any, label: str) -> str:
-    normalized = str(value or "").strip()
-    if not normalized:
-        raise ValueError(f"{label} is required.")
-    return normalized
+    return required_text(value, label, error_type=ProcurementError)
 
 
 def _optional(value: Any) -> Optional[str]:

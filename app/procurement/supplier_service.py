@@ -2,10 +2,15 @@ from sqlite3 import IntegrityError
 from typing import Any, Optional
 
 from auth import require_inventory_management
+from app.core.exceptions import ProcurementError
+from app.core.logging_utils import get_logger, log_event
+from app.core.validation import normalized_email, optional_text, required_text
 from app.database.db_manager import get_connection
+from app.database.transactions import transaction
 
 
 Supplier = dict[str, Any]
+logger = get_logger("suppliers")
 
 
 def create_supplier(
@@ -16,11 +21,11 @@ def create_supplier(
     address: Optional[str] = None,
 ) -> Supplier:
     """Create an active supplier after manager-level authorization."""
-    require_inventory_management(session)
+    session = require_inventory_management(session)
     normalized_name = _required(name, "Supplier name")
     normalized_email = _normalize_email(email)
 
-    with get_connection() as conn:
+    with transaction() as conn:
         _ensure_unique_supplier(conn, normalized_name, normalized_email)
         try:
             cursor = conn.execute(
@@ -30,19 +35,20 @@ def create_supplier(
             )
             supplier_id = cursor.lastrowid
         except IntegrityError as exc:
-            raise ValueError("Supplier name already exists.") from exc
+            raise ProcurementError("Supplier name already exists.") from exc
+    log_event(logger, "supplier_created", supplier_id=supplier_id, user_id=session.user_id)
     return get_supplier_by_id(supplier_id)
 
 
 def update_supplier(session: Any, supplier_id: int, **updates: Any) -> Supplier:
     """Update supplier contact details without replacing purchase history."""
-    require_inventory_management(session)
+    session = require_inventory_management(session)
     allowed = {"name", "phone", "email", "address"}
     changes = {key: value for key, value in updates.items() if key in allowed}
     if not changes:
         supplier = get_supplier_by_id(supplier_id)
         if not supplier:
-            raise ValueError("Supplier not found.")
+            raise ProcurementError("Supplier not found.")
         return supplier
 
     if "name" in changes:
@@ -53,10 +59,10 @@ def update_supplier(session: Any, supplier_id: int, **updates: Any) -> Supplier:
     if "email" in changes:
         changes["email"] = _normalize_email(changes["email"])
 
-    with get_connection() as conn:
+    with transaction() as conn:
         current = conn.execute("SELECT * FROM suppliers WHERE id = ?", (supplier_id,)).fetchone()
         if not current:
-            raise ValueError("Supplier not found.")
+            raise ProcurementError("Supplier not found.")
         _ensure_unique_supplier(
             conn,
             changes.get("name", current["name"]),
@@ -68,32 +74,35 @@ def update_supplier(session: Any, supplier_id: int, **updates: Any) -> Supplier:
             f"UPDATE suppliers SET {assignments}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             [*changes.values(), supplier_id],
         )
+    log_event(logger, "supplier_updated", supplier_id=supplier_id, user_id=session.user_id)
     return get_supplier_by_id(supplier_id)
 
 
 def deactivate_supplier(session: Any, supplier_id: int) -> Supplier:
     """Soft-deactivate a supplier while preserving all purchase references."""
-    require_inventory_management(session)
-    with get_connection() as conn:
+    session = require_inventory_management(session)
+    with transaction() as conn:
         cursor = conn.execute(
             "UPDATE suppliers SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (supplier_id,),
         )
         if cursor.rowcount == 0:
-            raise ValueError("Supplier not found.")
+            raise ProcurementError("Supplier not found.")
+    log_event(logger, "supplier_deactivated", supplier_id=supplier_id, user_id=session.user_id)
     return get_supplier_by_id(supplier_id)
 
 
 def reactivate_supplier(session: Any, supplier_id: int) -> Supplier:
     """Reactivate an existing supplier record."""
-    require_inventory_management(session)
-    with get_connection() as conn:
+    session = require_inventory_management(session)
+    with transaction() as conn:
         cursor = conn.execute(
             "UPDATE suppliers SET is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (supplier_id,),
         )
         if cursor.rowcount == 0:
-            raise ValueError("Supplier not found.")
+            raise ProcurementError("Supplier not found.")
+    log_event(logger, "supplier_reactivated", supplier_id=supplier_id, user_id=session.user_id)
     return get_supplier_by_id(supplier_id)
 
 
@@ -142,7 +151,7 @@ def _ensure_unique_supplier(
     if conn.execute(
         f"SELECT id FROM suppliers WHERE name = ? COLLATE NOCASE{exclusion}", params
     ).fetchone():
-        raise ValueError("Supplier name already exists.")
+        raise ProcurementError("Supplier name already exists.")
 
     if email:
         email_params: list[Any] = [email]
@@ -152,21 +161,16 @@ def _ensure_unique_supplier(
             f"SELECT id FROM suppliers WHERE email = ? COLLATE NOCASE{exclusion}",
             email_params,
         ).fetchone():
-            raise ValueError("Supplier email already exists.")
+            raise ProcurementError("Supplier email already exists.")
 
 
 def _required(value: Any, label: str) -> str:
-    normalized = str(value or "").strip()
-    if not normalized:
-        raise ValueError(f"{label} is required.")
-    return normalized
+    return required_text(value, label, error_type=ProcurementError)
 
 
 def _optional(value: Any) -> Optional[str]:
-    normalized = str(value or "").strip()
-    return normalized or None
+    return optional_text(value)
 
 
 def _normalize_email(value: Any) -> Optional[str]:
-    normalized = _optional(value)
-    return normalized.lower() if normalized else None
+    return normalized_email(value)

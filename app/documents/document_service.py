@@ -1,9 +1,15 @@
 import re
 from typing import Any, Mapping, Optional
 
+from app.core.config import get_config
+from app.core.exceptions import DocumentError
+from app.core.logging_utils import get_logger, log_event
 from app.database.db_manager import get_connection
 from app.documents.branding import load_branding
 from app.documents.renderers import attach_outputs
+
+
+logger = get_logger("documents")
 
 
 def generate_sales_receipt(
@@ -23,7 +29,7 @@ def generate_sales_receipt(
             "footer": config.receipt_footer,
         }
     )
-    return attach_outputs(document, width_mm=width_mm)
+    return _finalize(document, width_mm)
 
 
 def generate_sales_invoice(
@@ -47,7 +53,7 @@ def generate_sales_invoice(
             "page_layout": "A4",
         }
     )
-    return attach_outputs(document, width_mm=80)
+    return _finalize(document, 80)
 
 
 def generate_credit_note(
@@ -72,7 +78,7 @@ def generate_credit_note(
             (return_id,),
         ).fetchone()
         if not header:
-            raise ValueError("Sales return not found.")
+            raise DocumentError("Sales return not found.")
         items = [
             dict(row)
             for row in conn.execute(
@@ -111,7 +117,7 @@ def generate_credit_note(
         "totals": {"total_refunded": float(header["total_refunded"])},
         "footer": config.receipt_footer,
     }
-    return attach_outputs(document, width_mm=width_mm)
+    return _finalize(document, width_mm)
 
 
 def generate_purchase_order_document(
@@ -135,7 +141,7 @@ def generate_purchase_order_document(
             (purchase_order_id,),
         ).fetchone()
         if not header:
-            raise ValueError("Purchase order not found.")
+            raise DocumentError("Purchase order not found.")
         items = [
             dict(row)
             for row in conn.execute(
@@ -183,7 +189,7 @@ def generate_purchase_order_document(
         "footer": config.invoice_footer,
         "page_layout": "A4",
     }
-    return attach_outputs(document, width_mm=80)
+    return _finalize(document, 80)
 
 
 def generate_goods_received_note(
@@ -210,7 +216,7 @@ def generate_goods_received_note(
             (receipt_id,),
         ).fetchone()
         if not header:
-            raise ValueError("Goods receipt not found.")
+            raise DocumentError("Goods receipt not found.")
         items = [
             dict(row)
             for row in conn.execute(
@@ -263,7 +269,7 @@ def generate_goods_received_note(
         "footer": config.invoice_footer,
         "page_layout": "A4",
     }
-    return attach_outputs(document, width_mm=80)
+    return _finalize(document, 80)
 
 
 def generate_stock_transfer_document(
@@ -292,7 +298,7 @@ def generate_stock_transfer_document(
             (transfer_id,),
         ).fetchone()
         if not header:
-            raise ValueError("Stock transfer not found.")
+            raise DocumentError("Stock transfer not found.")
         items = [
             dict(row)
             for row in conn.execute(
@@ -367,7 +373,21 @@ def generate_stock_transfer_document(
         "footer": config.invoice_footer,
         "page_layout": "A4",
     }
-    return attach_outputs(document, width_mm=80)
+    return _finalize(document, 80)
+
+
+def _finalize(document: dict[str, Any], width_mm: int) -> dict[str, Any]:
+    """Render and log a generated document without exposing document contents."""
+    rendered = attach_outputs(document, width_mm=width_mm)
+    log_event(
+        logger,
+        "document_generated",
+        document_type=document.get("document_type"),
+        document_number=document.get("document_number"),
+        store_code=(document.get("store") or {}).get("code"),
+        width_mm=width_mm,
+    )
+    return rendered
 
 
 def document_number(
@@ -376,20 +396,21 @@ def document_number(
     store_code: str,
 ) -> str:
     """Return a deterministic unique document number for a persisted entity."""
+    numbering = get_config().numbering
     prefixes = {
-        "invoice": "INV",
-        "credit_note": "CN",
-        "purchase_order": "PO",
-        "stock_transfer": "TRN",
+        "invoice": numbering.invoice_prefix,
+        "credit_note": numbering.credit_note_prefix,
+        "purchase_order": numbering.purchase_order_prefix,
+        "stock_transfer": numbering.transfer_prefix,
     }
     if document_type not in prefixes:
-        raise ValueError("Unsupported generated document number type.")
+        raise DocumentError("Unsupported generated document number type.")
     try:
         entity_id = int(entity_id)
     except (TypeError, ValueError) as exc:
-        raise ValueError("Document entity id must be an integer.") from exc
+        raise DocumentError("Document entity id must be an integer.") from exc
     if entity_id <= 0:
-        raise ValueError("Document entity id must be positive.")
+        raise DocumentError("Document entity id must be positive.")
     normalized_store = re.sub(r"[^A-Z0-9]+", "-", str(store_code).upper()).strip("-")
     normalized_store = normalized_store or "STORE"
     return f"{prefixes[document_type]}-{normalized_store}-{entity_id:08d}"
@@ -409,7 +430,7 @@ def _load_sale(sale_id: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             (sale_id,),
         ).fetchone()
         if not sale:
-            raise ValueError("Sale not found.")
+            raise DocumentError("Sale not found.")
         items = [
             dict(row)
             for row in conn.execute(

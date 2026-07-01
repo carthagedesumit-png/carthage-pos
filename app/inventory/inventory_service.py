@@ -1,6 +1,10 @@
 from sqlite3 import IntegrityError
 from auth import require_inventory_management
+from app.core.exceptions import InventoryError
+from app.core.logging_utils import get_logger, log_event
+from app.core.validation import non_negative_number, required_text
 from app.database.db_manager import get_connection
+from app.database.transactions import transaction
 
 
 MOVEMENT_PURCHASE = "PURCHASE"
@@ -10,6 +14,7 @@ MOVEMENT_RETURN = "RETURN"
 VALID_MOVEMENT_TYPES = {
     MOVEMENT_PURCHASE, MOVEMENT_SALE, MOVEMENT_ADJUSTMENT, MOVEMENT_RETURN,
 }
+logger = get_logger("inventory")
 
 
 def create_product(
@@ -36,7 +41,7 @@ def create_product(
     validate_stock_value(reorder_level, "Reorder level")
 
     try:
-        with get_connection() as conn:
+        with transaction() as conn:
             cursor = conn.execute(
                 """INSERT INTO products (
                     category_id, supplier_id, sku, barcode, name, description,
@@ -67,7 +72,14 @@ def create_product(
                     int(quantity_in_stock), session.user_id, "Initial stock", store_id=store_id,
                 )
     except IntegrityError as exc:
-        raise ValueError("SKU or barcode already exists.") from exc
+        raise InventoryError("SKU or barcode already exists.") from exc
+    log_event(
+        logger,
+        "product_created",
+        product_id=product_id,
+        store_id=store_id,
+        user_id=session.user_id,
+    )
     return get_product_by_id(product_id, store_id=store_id)
 
 
@@ -94,9 +106,9 @@ def update_product(session, product_id, store_id=None, **updates):
     store_reorder = changes.pop("reorder_level", None)
     store_cost = changes.get("cost_price")
     try:
-        with get_connection() as conn:
+        with transaction() as conn:
             if not conn.execute("SELECT 1 FROM products WHERE id = ?", (product_id,)).fetchone():
-                raise ValueError("Product not found.")
+                raise InventoryError("Product not found.")
             if changes:
                 assignments = ", ".join(f"{field} = ?" for field in changes)
                 conn.execute(
@@ -118,7 +130,7 @@ def update_product(session, product_id, store_id=None, **updates):
                 )
             sync_product_aggregate(conn, product_id)
     except IntegrityError as exc:
-        raise ValueError("SKU or barcode already exists.") from exc
+        raise InventoryError("SKU or barcode already exists.") from exc
     return get_product_by_id(product_id, store_id=store_id)
 
 
@@ -130,7 +142,7 @@ def adjust_stock(session, product_id, new_quantity, notes=None, store_id=None):
     session = require_inventory_management(session, store_id=store_id)
     store_id = int(store_id or session.store_id)
     validate_stock_value(new_quantity, "New quantity")
-    with get_connection() as conn:
+    with transaction() as conn:
         inventory = get_store_inventory(product_id, store_id, conn=conn)
         if not inventory:
             ensure_store_inventory(conn, store_id, product_id)
@@ -148,6 +160,15 @@ def adjust_stock(session, product_id, new_quantity, notes=None, store_id=None):
             conn, product_id, MOVEMENT_ADJUSTMENT, new_quantity - previous_quantity,
             previous_quantity, new_quantity, session.user_id, notes, store_id=store_id,
         )
+    log_event(
+        logger,
+        "stock_adjusted",
+        product_id=product_id,
+        store_id=store_id,
+        previous_quantity=previous_quantity,
+        new_quantity=new_quantity,
+        user_id=session.user_id,
+    )
     return get_product_by_id(product_id, store_id=store_id)
 
 
@@ -172,7 +193,7 @@ def record_sale_stock_movement(
     new_quantity = previous_quantity - int(quantity)
     if new_quantity < 0:
         product = get_product_by_id(product_id, conn=conn)
-        raise ValueError(f"Insufficient stock for {product['name']} at the selected store.")
+        raise InventoryError(f"Insufficient stock for {product['name']} at the selected store.")
     conn.execute(
         """UPDATE store_inventory SET quantity_on_hand = ?, updated_at = CURRENT_TIMESTAMP
            WHERE store_id = ? AND product_id = ?""",
@@ -191,15 +212,15 @@ def apply_stock_delta(
     transfer_id=None,
 ):
     if movement_type not in VALID_MOVEMENT_TYPES:
-        raise ValueError("Invalid stock movement type.")
-    with get_connection() as conn:
+        raise InventoryError("Invalid stock movement type.")
+    with transaction() as conn:
         store_id = int(store_id or get_default_store_id(conn))
         ensure_store_inventory(conn, store_id, product_id)
         inventory = get_store_inventory(product_id, store_id, conn=conn)
         previous_quantity = inventory["quantity_on_hand"]
         new_quantity = previous_quantity + int(delta)
         if new_quantity < 0:
-            raise ValueError("Stock cannot become negative.")
+            raise InventoryError("Stock cannot become negative.")
         conn.execute(
             """UPDATE store_inventory SET quantity_on_hand = ?, updated_at = CURRENT_TIMESTAMP
                WHERE store_id = ? AND product_id = ?""",
@@ -210,6 +231,15 @@ def apply_stock_delta(
             conn, product_id, movement_type, int(delta), previous_quantity,
             new_quantity, user_id, notes, store_id=store_id, transfer_id=transfer_id,
         )
+    log_event(
+        logger,
+        "stock_delta_applied",
+        product_id=product_id,
+        store_id=store_id,
+        delta=int(delta),
+        movement_type=movement_type,
+        user_id=user_id,
+    )
     return get_product_by_id(product_id, store_id=store_id)
 
 
@@ -388,7 +418,7 @@ def log_stock_movement(
     user_id, notes=None, store_id=None, transfer_id=None,
 ):
     if movement_type not in VALID_MOVEMENT_TYPES:
-        raise ValueError("Invalid stock movement type.")
+        raise InventoryError("Invalid stock movement type.")
     store_id = int(store_id or get_default_store_id(conn))
     conn.execute(
         """INSERT INTO stock_movements (
@@ -418,22 +448,29 @@ def get_default_store_id(conn=None):
 
 
 def normalize_required(value, label):
-    value = (value or "").strip()
-    if not value:
-        raise ValueError(f"{label} is required.")
-    return value
+    return required_text(value, label, error_type=InventoryError)
 
 
 def validate_non_negative(value, label):
-    if float(value) < 0:
-        raise ValueError(f"{label} cannot be negative.")
+    try:
+        non_negative_number(value, label, error_type=InventoryError)
+    except InventoryError as exc:
+        raise InventoryError(f"{label} cannot be negative.") from exc
 
 
 def validate_stock_value(value, label):
-    if int(value) < 0:
-        raise ValueError(f"{label} cannot be negative.")
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise InventoryError(f"{label} cannot be negative.") from exc
+    if number < 0:
+        raise InventoryError(f"{label} cannot be negative.")
 
 
 def validate_positive_quantity(quantity):
-    if int(quantity) <= 0:
-        raise ValueError("Quantity must be positive.")
+    try:
+        number = int(quantity)
+    except (TypeError, ValueError) as exc:
+        raise InventoryError("Quantity must be positive.") from exc
+    if number <= 0:
+        raise InventoryError("Quantity must be positive.")

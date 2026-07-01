@@ -3,7 +3,11 @@ from sqlite3 import IntegrityError
 from typing import Any, Optional
 
 from auth import require_inventory_management, require_store_access
+from app.core.exceptions import TransferError
+from app.core.logging_utils import get_logger, log_event
+from app.core.validation import positive_int, required_text
 from app.database.db_manager import get_connection
+from app.database.transactions import transaction
 from app.inventory.inventory_service import (
     MOVEMENT_ADJUSTMENT,
     ensure_store_inventory,
@@ -18,6 +22,7 @@ STATUS_APPROVED = "APPROVED"
 STATUS_IN_TRANSIT = "IN_TRANSIT"
 STATUS_RECEIVED = "RECEIVED"
 STATUS_CANCELLED = "CANCELLED"
+logger = get_logger("transfers")
 
 
 def create_transfer(
@@ -33,12 +38,12 @@ def create_transfer(
     require_store_access(session, source_store_id, manage=True)
     reference_number = _required(reference_number, "Transfer reference")
     if source_store_id == destination_store_id:
-        raise ValueError("Source and destination stores must be different.")
+        raise TransferError("Source and destination stores must be different.")
     if not line_items:
-        raise ValueError("Transfer must contain at least one line item.")
+        raise TransferError("Transfer must contain at least one line item.")
 
     try:
-        with get_connection() as conn:
+        with transaction() as conn:
             _require_active_store(conn, source_store_id)
             _require_active_store(conn, destination_store_id)
             prepared = _prepare_request_items(conn, line_items)
@@ -70,18 +75,19 @@ def create_transfer(
                 conn, transfer_id, None, STATUS_REQUESTED, session.user_id, notes
             )
     except IntegrityError as exc:
-        raise ValueError("Transfer reference or product line already exists.") from exc
+        raise TransferError("Transfer reference or product line already exists.") from exc
+    log_event(logger, "transfer_created", transfer_id=transfer_id, user_id=session.user_id)
     return get_transfer(transfer_id)
 
 
 def approve_transfer(session: Any, transfer_id: int) -> dict[str, Any]:
     """Approve a requested transfer after source-store authorization."""
     session = require_inventory_management(session)
-    with get_connection() as conn:
+    with transaction() as conn:
         transfer = _get_transfer_header(conn, transfer_id)
         require_store_access(session, transfer["source_store_id"], manage=True)
         if transfer["status"] != STATUS_REQUESTED:
-            raise ValueError("Only requested transfers can be approved.")
+            raise TransferError("Only requested transfers can be approved.")
         _validate_source_stock(conn, transfer_id, transfer["source_store_id"])
         conn.execute(
             """UPDATE stock_transfers
@@ -93,6 +99,7 @@ def approve_transfer(session: Any, transfer_id: int) -> dict[str, Any]:
         _log_event(
             conn, transfer_id, STATUS_REQUESTED, STATUS_APPROVED, session.user_id
         )
+    log_event(logger, "transfer_approved", transfer_id=transfer_id, user_id=session.user_id)
     return get_transfer(transfer_id)
 
 
@@ -105,13 +112,12 @@ def dispatch_transfer(
     """Dispatch part or all of an approved transfer from source inventory."""
     session = require_inventory_management(session)
     if not line_items:
-        raise ValueError("Dispatch must contain at least one line item.")
-    with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        raise TransferError("Dispatch must contain at least one line item.")
+    with transaction() as conn:
         transfer = _get_transfer_header(conn, transfer_id)
         require_store_access(session, transfer["source_store_id"], manage=True)
         if transfer["status"] not in {STATUS_APPROVED, STATUS_IN_TRANSIT}:
-            raise ValueError("Transfer is not approved for dispatch.")
+            raise TransferError("Transfer is not approved for dispatch.")
         prepared = _prepare_transfer_activity(
             conn, transfer_id, line_items, activity="dispatch"
         )
@@ -128,7 +134,7 @@ def dispatch_transfer(
                 item["product_id"], transfer["source_store_id"], conn=conn
             )
             if not inventory or inventory["quantity_on_hand"] < item["quantity"]:
-                raise ValueError("Insufficient source-store inventory for transfer.")
+                raise TransferError("Insufficient source-store inventory for transfer.")
             previous_quantity = inventory["quantity_on_hand"]
             new_quantity = previous_quantity - item["quantity"]
             unit_cost = float(inventory["average_cost"] or 0)
@@ -180,6 +186,7 @@ def dispatch_transfer(
                 session.user_id,
                 notes,
             )
+    log_event(logger, "transfer_dispatched", transfer_id=transfer_id, user_id=session.user_id)
     return get_transfer(transfer_id)
 
 
@@ -192,13 +199,12 @@ def receive_transfer(
     """Receive dispatched transfer quantities into destination inventory."""
     session = require_inventory_management(session)
     if not line_items:
-        raise ValueError("Transfer receipt must contain at least one line item.")
-    with get_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        raise TransferError("Transfer receipt must contain at least one line item.")
+    with transaction() as conn:
         transfer = _get_transfer_header(conn, transfer_id)
         require_store_access(session, transfer["destination_store_id"], manage=True)
         if transfer["status"] != STATUS_IN_TRANSIT:
-            raise ValueError("Transfer has no inventory available for receipt.")
+            raise TransferError("Transfer has no inventory available for receipt.")
         prepared = _prepare_transfer_activity(
             conn, transfer_id, line_items, activity="receive"
         )
@@ -295,13 +301,14 @@ def receive_transfer(
                 session.user_id,
                 notes,
             )
+    log_event(logger, "transfer_received", transfer_id=transfer_id, user_id=session.user_id)
     return get_transfer(transfer_id)
 
 
 def cancel_transfer(session: Any, transfer_id: int, notes: Optional[str] = None):
     """Cancel a transfer only before any stock has been dispatched."""
     session = require_inventory_management(session)
-    with get_connection() as conn:
+    with transaction() as conn:
         transfer = _get_transfer_header(conn, transfer_id)
         require_store_access(session, transfer["source_store_id"], manage=True)
         dispatched = conn.execute(
@@ -309,7 +316,7 @@ def cancel_transfer(session: Any, transfer_id: int, notes: Optional[str] = None)
             (transfer_id,),
         ).fetchone()[0]
         if transfer["status"] not in {STATUS_REQUESTED, STATUS_APPROVED} or dispatched:
-            raise ValueError("Transfer cannot be cancelled after dispatch.")
+            raise TransferError("Transfer cannot be cancelled after dispatch.")
         conn.execute(
             """UPDATE stock_transfers
                SET status = ?, cancelled_at = CURRENT_TIMESTAMP,
@@ -324,6 +331,7 @@ def cancel_transfer(session: Any, transfer_id: int, notes: Optional[str] = None)
             session.user_id,
             notes,
         )
+    log_event(logger, "transfer_cancelled", transfer_id=transfer_id, user_id=session.user_id)
     return get_transfer(transfer_id)
 
 
@@ -489,20 +497,11 @@ def _average_cost(previous_quantity, previous_cost, incoming_quantity, incoming_
 
 
 def _positive_quantity(value):
-    try:
-        quantity = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("Quantity must be a positive whole number.") from exc
-    if quantity <= 0 or quantity != float(value):
-        raise ValueError("Quantity must be a positive whole number.")
-    return quantity
+    return positive_int(value, error_type=TransferError)
 
 
 def _required(value, label):
-    normalized = str(value or "").strip()
-    if not normalized:
-        raise ValueError(f"{label} is required.")
-    return normalized
+    return required_text(value, label, error_type=TransferError)
 
 
 def _optional(value):

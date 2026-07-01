@@ -1,6 +1,7 @@
 import os
 
 from auth import AuthorizationError, UserSession, require_inventory_management
+from app.core.config import get_config
 from app.core.pos_engine import ShoppingCart, fetch_all_inventory, fetch_dashboard_metrics
 from app.documents.document_service import generate_sales_receipt
 from app.inventory.inventory_service import adjust_stock
@@ -53,7 +54,10 @@ def commit_transaction(cart_data, session, payment_method=PAYMENT_CASH, amount_p
 def print_receipt(receipt_data):
     """Print the document-engine thermal representation for a completed sale."""
     clear_screen()
-    document = generate_sales_receipt(receipt_data["sale"]["sale_id"], width_mm=80)
+    document = generate_sales_receipt(
+        receipt_data["sale"]["sale_id"],
+        width_mm=get_config().receipt.width_mm,
+    )
     print(document["text"])
 
 

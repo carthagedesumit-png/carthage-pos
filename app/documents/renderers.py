@@ -1,6 +1,8 @@
 from html import escape
 from typing import Any
 
+from app.core.exceptions import DocumentError
+
 
 THERMAL_WIDTHS = {58: 32, 80: 48}
 INTERNAL_KEYS = {"id", "product_id", "sale_item_id", "purchase_order_item_id"}
@@ -9,7 +11,7 @@ INTERNAL_KEYS = {"id", "product_id", "sale_item_id", "purchase_order_item_id"}
 def render_plain_text(document: dict[str, Any], width_mm: int = 80) -> str:
     """Render a structured business document for terminal or thermal output."""
     if width_mm not in THERMAL_WIDTHS:
-        raise ValueError("Thermal width must be either 58mm or 80mm.")
+        raise DocumentError("Thermal width must be either 58mm or 80mm.")
     width = THERMAL_WIDTHS[width_mm]
     lines: list[str] = []
     business = document.get("business", {})

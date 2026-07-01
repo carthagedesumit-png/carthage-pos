@@ -2,7 +2,11 @@ from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 
 from auth import AuthorizationError, INVENTORY_ROLES, require_store_access, validate_session
+from app.core.config import get_config
+from app.core.exceptions import SalesError
+from app.core.logging_utils import get_logger, log_event
 from app.database.db_manager import get_connection
+from app.database.transactions import transaction
 from app.inventory.inventory_service import (
     MOVEMENT_RETURN,
     get_product_by_id,
@@ -19,25 +23,31 @@ PAYMENT_METHODS = {PAYMENT_CASH, PAYMENT_CARD, PAYMENT_TRANSFER, PAYMENT_MIXED}
 PAYMENT_STATUS_PAID = "PAID"
 DISCOUNT_PERCENTAGE = "PERCENTAGE"
 DISCOUNT_FIXED = "FIXED"
+logger = get_logger("sales")
 
 
-def calculate_totals(items, discount_type=None, discount_value=0, tax_rate=0, store_id=None):
+def calculate_totals(
+    items, discount_type=None, discount_value=0, tax_rate=None, store_id=None, conn=None,
+):
     if not items:
-        raise ValueError("Sale must contain at least one item.")
+        raise SalesError("Sale must contain at least one item.")
 
     subtotal = 0.0
     normalized_items = []
-    with get_connection() as conn:
+    close_conn = conn is None
+    if close_conn:
+        conn = get_connection()
+    try:
         for item in items:
             product_id = item.get("product_id")
             quantity = int(item.get("quantity", 0))
             validate_positive_quantity(quantity)
             product = get_product_by_id(product_id, conn=conn, store_id=store_id)
             if not product or not product["is_active"]:
-                raise ValueError("Product not found or inactive.")
+                raise SalesError("Product not found or inactive.")
             unit_price = float(product["selling_price"])
             if unit_price < 0:
-                raise ValueError("Unit price cannot be negative.")
+                raise SalesError("Unit price cannot be negative.")
             line_total = unit_price * quantity
             subtotal += line_total
             normalized_items.append({
@@ -49,11 +59,15 @@ def calculate_totals(items, discount_type=None, discount_value=0, tax_rate=0, st
                 "unit_cost": float(product.get("cost_price") or 0),
                 "line_total": line_total,
             })
+    finally:
+        if close_conn:
+            conn.close()
 
     discount_amount = calculate_discount(subtotal, discount_type, discount_value)
     taxable_amount = subtotal - discount_amount
+    tax_rate = get_config().tax_rate if tax_rate is None else tax_rate
     if tax_rate < 0:
-        raise ValueError("Tax rate cannot be negative.")
+        raise SalesError("Tax rate cannot be negative.")
     tax_amount = taxable_amount * float(tax_rate)
     total_amount = taxable_amount + tax_amount
 
@@ -69,18 +83,18 @@ def calculate_totals(items, discount_type=None, discount_value=0, tax_rate=0, st
 def calculate_discount(subtotal, discount_type=None, discount_value=0):
     discount_value = float(discount_value or 0)
     if discount_value < 0:
-        raise ValueError("Discount cannot be negative.")
+        raise SalesError("Discount cannot be negative.")
     if not discount_type or discount_value == 0:
         return 0.0
     if discount_type == DISCOUNT_PERCENTAGE:
         if discount_value > 100:
-            raise ValueError("Percentage discount cannot exceed 100.")
+            raise SalesError("Percentage discount cannot exceed 100.")
         return subtotal * (discount_value / 100)
     if discount_type == DISCOUNT_FIXED:
         if discount_value > subtotal:
-            raise ValueError("Fixed discount cannot exceed subtotal.")
+            raise SalesError("Fixed discount cannot exceed subtotal.")
         return discount_value
-    raise ValueError("Invalid discount type.")
+    raise SalesError("Invalid discount type.")
 
 
 def process_payment(total_amount, payment_method, amount_paid=None):
@@ -90,7 +104,7 @@ def process_payment(total_amount, payment_method, amount_paid=None):
         amount_paid = total_amount if payment_method in {PAYMENT_CARD, PAYMENT_TRANSFER} else 0
     amount_paid = money_round(amount_paid)
     if amount_paid < total_amount:
-        raise ValueError("Insufficient payment.")
+        raise SalesError("Insufficient payment.")
     return {
         "payment_method": payment_method,
         "payment_status": PAYMENT_STATUS_PAID,
@@ -106,7 +120,7 @@ def generate_receipt_number(conn=None, created_at=None):
         close_conn = True
     try:
         date_key = (created_at or datetime.now()).strftime("%Y%m%d")
-        prefix = f"POS-{date_key}-"
+        prefix = f"{get_config().numbering.receipt_prefix}-{date_key}-"
         row = conn.execute(
             "SELECT receipt_number FROM sales WHERE receipt_number LIKE ? ORDER BY receipt_number DESC LIMIT 1",
             (f"{prefix}%",)
@@ -125,25 +139,25 @@ def create_sale(
     amount_paid=None,
     discount_type=None,
     discount_value=0,
-    tax_rate=0,
+    tax_rate=None,
     store_id=None,
-    register_name="REGISTER-1",
+    register_name=None,
 ):
     session = require_session(session)
     store_id = int(store_id or session.store_id)
     session = require_store_access(session, store_id)
     if discount_value and session.role not in INVENTORY_ROLES:
         raise AuthorizationError("Only admin and manager users can apply sale discounts.")
-    totals = calculate_totals(
-        items,
-        discount_type=discount_type,
-        discount_value=discount_value,
-        tax_rate=tax_rate,
-        store_id=store_id,
-    )
-    payment = process_payment(totals["total_amount"], payment_method, amount_paid)
-
-    with get_connection() as conn:
+    with transaction() as conn:
+        totals = calculate_totals(
+            items,
+            discount_type=discount_type,
+            discount_value=discount_value,
+            tax_rate=tax_rate,
+            store_id=store_id,
+            conn=conn,
+        )
+        payment = process_payment(totals["total_amount"], payment_method, amount_paid)
         receipt_number = generate_receipt_number(conn)
         cursor = conn.execute(
             """INSERT INTO sales (
@@ -156,7 +170,8 @@ def create_sale(
                 receipt_number,
                 session.user_id,
                 store_id,
-                str(register_name or "REGISTER-1").strip() or "REGISTER-1",
+                str(register_name or get_config().receipt.register_name).strip()
+                or get_config().receipt.register_name,
                 session.username,
                 session.username,
                 totals["subtotal"],
@@ -194,6 +209,15 @@ def create_sale(
                 )
             )
 
+    log_event(
+        logger,
+        "sale_created",
+        sale_id=sale_id,
+        receipt_number=receipt_number,
+        store_id=store_id,
+        user_id=session.user_id,
+        total_amount=totals["total_amount"],
+    )
     return print_receipt_data(sale_id)
 
 
@@ -201,7 +225,7 @@ def print_receipt_data(sale_id):
     with get_connection() as conn:
         sale = conn.execute("SELECT * FROM sales WHERE sale_id = ?", (sale_id,)).fetchone()
         if not sale:
-            raise ValueError("Sale not found.")
+            raise SalesError("Sale not found.")
         items = [dict(row) for row in conn.execute(
             """SELECT si.id, si.product_id, p.sku, p.name, si.quantity, si.price_at_sale,
                       (si.quantity * si.price_at_sale) AS line_total
@@ -217,14 +241,14 @@ def print_receipt_data(sale_id):
 def process_return(session, sale_id, return_items, reason):
     session = require_return_management(session)
     if not reason or not reason.strip():
-        raise ValueError("Return reason is required.")
+        raise SalesError("Return reason is required.")
     if not return_items:
-        raise ValueError("Return must contain at least one item.")
+        raise SalesError("Return must contain at least one item.")
 
-    with get_connection() as conn:
+    with transaction() as conn:
         sale = conn.execute("SELECT * FROM sales WHERE sale_id = ?", (sale_id,)).fetchone()
         if not sale:
-            raise ValueError("Sale not found.")
+            raise SalesError("Sale not found.")
         session = require_store_access(session, sale["store_id"], manage=True)
 
         prepared_items = []
@@ -238,7 +262,7 @@ def process_return(session, sale_id, return_items, reason):
                 (sale_item_id, sale_id)
             ).fetchone()
             if not sale_item:
-                raise ValueError("Sale item not found.")
+                raise SalesError("Sale item not found.")
             returned_qty = conn.execute(
                 """SELECT COALESCE(SUM(sri.quantity), 0) AS qty
                    FROM sales_return_items sri
@@ -247,7 +271,7 @@ def process_return(session, sale_id, return_items, reason):
                 (sale_id, sale_item_id)
             ).fetchone()["qty"]
             if returned_qty + quantity > sale_item["quantity"]:
-                raise ValueError("Refund quantity cannot exceed sold quantity.")
+                raise SalesError("Refund quantity cannot exceed sold quantity.")
             refund_amount = money_round(quantity * float(sale_item["price_at_sale"]))
             total_refunded += refund_amount
             prepared_items.append({
@@ -277,6 +301,15 @@ def process_return(session, sale_id, return_items, reason):
                 store_id=sale["store_id"],
             )
 
+    log_event(
+        logger,
+        "sale_return_created",
+        return_id=return_id,
+        sale_id=sale_id,
+        store_id=sale["store_id"],
+        user_id=session.user_id,
+        total_refunded=money_round(total_refunded),
+    )
     return get_return_data(return_id)
 
 
@@ -284,7 +317,7 @@ def refund_sale(session, sale_id, reason="Full sale refund"):
     with get_connection() as conn:
         rows = conn.execute("SELECT id, quantity FROM sale_items WHERE sale_id = ?", (sale_id,)).fetchall()
     if not rows:
-        raise ValueError("Sale has no refundable items.")
+        raise SalesError("Sale has no refundable items.")
     return process_return(
         session,
         sale_id,
@@ -296,7 +329,7 @@ def refund_sale(session, sale_id, reason="Full sale refund"):
 def restore_return_stock(conn, product_id, quantity, user_id, notes=None, store_id=None):
     product = get_product_by_id(product_id, conn=conn, store_id=store_id)
     if not product:
-        raise ValueError("Product not found.")
+        raise SalesError("Product not found.")
     previous_quantity = product["quantity_in_stock"]
     new_quantity = previous_quantity + int(quantity)
     from app.inventory.inventory_service import update_store_inventory_balance
@@ -312,7 +345,7 @@ def get_return_data(return_id):
     with get_connection() as conn:
         sales_return = conn.execute("SELECT * FROM sales_returns WHERE id = ?", (return_id,)).fetchone()
         if not sales_return:
-            raise ValueError("Return not found.")
+            raise SalesError("Return not found.")
         items = [dict(row) for row in conn.execute(
             "SELECT * FROM sales_return_items WHERE return_id = ? ORDER BY id",
             (return_id,)
@@ -322,7 +355,7 @@ def get_return_data(return_id):
 
 def validate_payment_method(payment_method):
     if payment_method not in PAYMENT_METHODS:
-        raise ValueError("Invalid payment method.")
+        raise SalesError("Invalid payment method.")
 
 
 def require_session(session):

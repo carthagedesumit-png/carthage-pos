@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 from typing import Any, Optional, Union
 
+from app.core.config import get_config
 from app.database.db_manager import get_connection
 
 
@@ -29,7 +30,7 @@ def get_sales_summary(
 
 def get_daily_sales_report(
     report_date: Optional[DateInput] = None,
-    top_limit: int = 10,
+    top_limit: Optional[int] = None,
     store_ids: Optional[list[int]] = None,
     session: Any = None,
 ) -> ReportRow:
@@ -39,6 +40,7 @@ def get_daily_sales_report(
     the original no-argument behavior.
     """
     store_ids = _resolve_report_store_ids(session, store_ids)
+    top_limit = get_config().reports.default_limit if top_limit is None else top_limit
     normalized_date = _normalize_date(report_date or date.today(), "report_date")
     report = _build_period_report(
         normalized_date, normalized_date, top_limit, store_ids=store_ids
@@ -50,12 +52,13 @@ def get_daily_sales_report(
 def get_date_range_sales_report(
     start_date: DateInput,
     end_date: DateInput,
-    top_limit: int = 10,
+    top_limit: Optional[int] = None,
     store_ids: Optional[list[int]] = None,
     session: Any = None,
 ) -> ReportRow:
     """Return business analytics for an inclusive calendar date range."""
     store_ids = _resolve_report_store_ids(session, store_ids)
+    top_limit = get_config().reports.default_limit if top_limit is None else top_limit
     normalized_start = _normalize_date(start_date, "start_date")
     normalized_end = _normalize_date(end_date, "end_date")
     if normalized_start > normalized_end:
@@ -82,12 +85,13 @@ def get_sales_report(
 
 
 def get_top_selling_products(
-    limit: int = 10,
+    limit: Optional[int] = None,
     store_ids: Optional[list[int]] = None,
     session: Any = None,
 ) -> list[ReportRow]:
     """Return refund-aware lifetime product sales under the legacy contract."""
     store_ids = _resolve_report_store_ids(session, store_ids)
+    limit = get_config().reports.default_limit if limit is None else limit
     _validate_limit(limit)
     with get_connection() as conn:
         rows = _fetch_period_product_metrics(
@@ -106,8 +110,8 @@ def get_top_selling_products(
 
 
 def get_product_performance_report(
-    limit: int = 10,
-    slow_moving_days: int = 30,
+    limit: Optional[int] = None,
+    slow_moving_days: Optional[int] = None,
     store_ids: Optional[list[int]] = None,
     session: Any = None,
 ) -> ReportRow:
@@ -117,6 +121,11 @@ def get_product_performance_report(
     ``slow_moving_days`` calendar days, including products never sold.
     """
     store_ids = _resolve_report_store_ids(session, store_ids)
+    settings = get_config().reports
+    limit = settings.default_limit if limit is None else limit
+    slow_moving_days = (
+        settings.slow_moving_days if slow_moving_days is None else slow_moving_days
+    )
     _validate_limit(limit)
     if not isinstance(slow_moving_days, int) or slow_moving_days < 1:
         raise ValueError("slow_moving_days must be a positive integer.")
