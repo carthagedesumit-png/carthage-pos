@@ -11,9 +11,9 @@ def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 
-def show_inventory():
+def show_inventory(store_id=None):
     """Fetches and prints out the entire supermarket stock grid."""
-    inventory = fetch_all_inventory()
+    inventory = fetch_all_inventory(store_id=store_id)
     print("\n" + "=" * 55)
     print(f" {'CARTHAGE SYSTEMS INVENTORY CONTROL':^53} ")
     print("=" * 55)
@@ -45,6 +45,7 @@ def commit_transaction(cart_data, session, payment_method=PAYMENT_CASH, amount_p
         payment_method=payment_method,
         amount_paid=amount_paid,
         tax_rate=0.075,
+        store_id=session.store_id,
     )
 
 
@@ -72,10 +73,10 @@ def print_receipt(receipt_data):
     print("*" * 45 + "\n")
 
 
-def show_dashboard():
+def show_dashboard(store_id=None):
     """Displays the executive metrics dashboard console."""
     clear_screen()
-    data = fetch_dashboard_metrics()
+    data = fetch_dashboard_metrics(store_ids=[store_id] if store_id else None)
 
     print("\n" + "=" * 55)
     print(f"| {'CARTHAGE SYSTEMS EXECUTIVE DASHBOARD':^51} |")
@@ -101,7 +102,7 @@ def run_pos_terminal(session):
     if not isinstance(session, UserSession):
         raise ValueError("A valid authenticated user session is required.")
 
-    cart = ShoppingCart()
+    cart = ShoppingCart(store_id=session.store_id)
 
     while True:
         print("\n" + "=" * 72)
@@ -117,7 +118,7 @@ def run_pos_terminal(session):
         choice = input("Select operation code: ").strip()
 
         if choice == "1":
-            show_inventory()
+            show_inventory(store_id=session.store_id)
         elif choice == "2":
             pid = input("Scan Barcode / Enter Product ID: ").strip()
             try:
@@ -149,7 +150,7 @@ def run_pos_terminal(session):
             else:
                 print("Checkout hold. Returning to terminal.")
         elif choice == "4":
-            show_dashboard()
+            show_dashboard(store_id=session.store_id)
         elif choice == "5":
             try:
                 require_inventory_management(session)

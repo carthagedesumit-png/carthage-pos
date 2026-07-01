@@ -8,9 +8,15 @@ DateInput = Union[str, date]
 ReportRow = dict[str, Any]
 
 
-def get_sales_summary() -> ReportRow:
+def get_sales_summary(
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> ReportRow:
     """Return backward-compatible, refund-aware lifetime sales totals."""
-    report = _build_period_report("0001-01-01", "9999-12-31", top_limit=0)
+    store_ids = _resolve_report_store_ids(session, store_ids)
+    report = _build_period_report(
+        "0001-01-01", "9999-12-31", top_limit=0, store_ids=store_ids
+    )
     return {
         "transaction_count": report["transaction_count"],
         "gross_sales": report["gross_sales"],
@@ -24,14 +30,19 @@ def get_sales_summary() -> ReportRow:
 def get_daily_sales_report(
     report_date: Optional[DateInput] = None,
     top_limit: int = 10,
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
 ) -> ReportRow:
     """Return business analytics for one calendar date.
 
     When ``report_date`` is omitted, the local calendar date is used to preserve
     the original no-argument behavior.
     """
+    store_ids = _resolve_report_store_ids(session, store_ids)
     normalized_date = _normalize_date(report_date or date.today(), "report_date")
-    report = _build_period_report(normalized_date, normalized_date, top_limit)
+    report = _build_period_report(
+        normalized_date, normalized_date, top_limit, store_ids=store_ids
+    )
     report["report_date"] = normalized_date
     return report
 
@@ -40,30 +51,47 @@ def get_date_range_sales_report(
     start_date: DateInput,
     end_date: DateInput,
     top_limit: int = 10,
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
 ) -> ReportRow:
     """Return business analytics for an inclusive calendar date range."""
+    store_ids = _resolve_report_store_ids(session, store_ids)
     normalized_start = _normalize_date(start_date, "start_date")
     normalized_end = _normalize_date(end_date, "end_date")
     if normalized_start > normalized_end:
         raise ValueError("start_date cannot be after end_date.")
 
-    report = _build_period_report(normalized_start, normalized_end, top_limit)
+    report = _build_period_report(
+        normalized_start, normalized_end, top_limit, store_ids=store_ids
+    )
     report["start_date"] = normalized_start
     report["end_date"] = normalized_end
     return report
 
 
-def get_sales_report(start_date: DateInput, end_date: DateInput) -> ReportRow:
+def get_sales_report(
+    start_date: DateInput,
+    end_date: DateInput,
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> ReportRow:
     """Return the enriched date-range report under the legacy method name."""
-    return get_date_range_sales_report(start_date, end_date)
+    return get_date_range_sales_report(
+        start_date, end_date, store_ids=store_ids, session=session
+    )
 
 
-def get_top_selling_products(limit: int = 10) -> list[ReportRow]:
+def get_top_selling_products(
+    limit: int = 10,
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> list[ReportRow]:
     """Return refund-aware lifetime product sales under the legacy contract."""
+    store_ids = _resolve_report_store_ids(session, store_ids)
     _validate_limit(limit)
     with get_connection() as conn:
         rows = _fetch_period_product_metrics(
-            conn, "0001-01-01", "9999-12-31", limit
+            conn, "0001-01-01", "9999-12-31", limit, store_ids=store_ids
         )
     return [
         {
@@ -80,18 +108,21 @@ def get_top_selling_products(limit: int = 10) -> list[ReportRow]:
 def get_product_performance_report(
     limit: int = 10,
     slow_moving_days: int = 30,
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
 ) -> ReportRow:
     """Return ranked lifetime product performance collections.
 
     Slow-moving products are active products with no sale during the trailing
     ``slow_moving_days`` calendar days, including products never sold.
     """
+    store_ids = _resolve_report_store_ids(session, store_ids)
     _validate_limit(limit)
     if not isinstance(slow_moving_days, int) or slow_moving_days < 1:
         raise ValueError("slow_moving_days must be a positive integer.")
 
     with get_connection() as conn:
-        metrics = _fetch_lifetime_product_metrics(conn)
+        metrics = _fetch_lifetime_product_metrics(conn, store_ids=store_ids)
 
     sold = [item for item in metrics if item["items_sold"] > 0]
     active = [item for item in metrics if item["is_active"]]
@@ -124,38 +155,46 @@ def get_product_performance_report(
     }
 
 
-def get_cashier_performance_report() -> list[ReportRow]:
+def get_cashier_performance_report(
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> list[ReportRow]:
     """Return refund-aware lifetime sales performance per selling user."""
+    store_ids = _resolve_report_store_ids(session, store_ids)
+    store_filter, store_params = _store_clause(store_ids, "s")
     with get_connection() as conn:
         rows = conn.execute(
-            """
-            WITH sale_totals AS (
+            f"""
+            WITH filtered_sales AS (
+                SELECT s.* FROM sales s WHERE 1 = 1 {store_filter}
+            ),
+            sale_totals AS (
                 SELECT user_id,
                        COUNT(*) AS transaction_count,
                        COALESCE(SUM(subtotal), 0) AS gross_sales,
                        COALESCE(SUM(discount_amount), 0) AS discount_total,
                        COALESCE(SUM(subtotal - discount_amount), 0) AS merchandise_revenue
-                FROM sales
+                FROM filtered_sales
                 GROUP BY user_id
             ), sold_items AS (
                 SELECT s.user_id,
                        COALESCE(SUM(si.quantity), 0) AS sold_quantity,
                        COALESCE(SUM(si.quantity * COALESCE(si.unit_cost_at_sale, 0)), 0) AS sold_cost
-                FROM sales s
+                FROM filtered_sales s
                 JOIN sale_items si ON si.sale_id = s.sale_id
                 LEFT JOIN products p ON p.id = CAST(si.product_id AS INTEGER)
                 GROUP BY s.user_id
             ), refunds AS (
                 SELECT s.user_id,
                        COALESCE(SUM(sr.total_refunded), 0) AS refund_total
-                FROM sales s
+                FROM filtered_sales s
                 JOIN sales_returns sr ON sr.sale_id = s.sale_id
                 GROUP BY s.user_id
             ), returned_items AS (
                 SELECT s.user_id,
                        COALESCE(SUM(sri.quantity), 0) AS returned_quantity,
                        COALESCE(SUM(sri.quantity * COALESCE(si.unit_cost_at_sale, 0)), 0) AS returned_cost
-                FROM sales s
+                FROM filtered_sales s
                 JOIN sale_items si ON si.sale_id = s.sale_id
                 JOIN sales_return_items sri ON sri.sale_item_id = si.id
                 LEFT JOIN products p ON p.id = CAST(si.product_id AS INTEGER)
@@ -184,7 +223,8 @@ def get_cashier_performance_report() -> list[ReportRow]:
             LEFT JOIN refunds r ON r.user_id = st.user_id
             LEFT JOIN returned_items ri ON ri.user_id = st.user_id
             ORDER BY net_sales DESC, st.transaction_count DESC, u.username
-            """
+            """,
+            store_params,
         ).fetchall()
 
     return [
@@ -206,26 +246,41 @@ def get_cashier_performance_report() -> list[ReportRow]:
     ]
 
 
-def get_low_stock_products() -> list[ReportRow]:
+def get_low_stock_products(
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> list[ReportRow]:
     """Return active products at or below their configured reorder level."""
+    store_ids = _resolve_report_store_ids(session, store_ids)
+    store_filter, store_params = _store_clause(store_ids, "si")
     with get_connection() as conn:
         rows = conn.execute(
-            """
-            SELECT id, sku, barcode, name, quantity_in_stock, reorder_level
-            FROM products
-            WHERE is_active = 1 AND quantity_in_stock <= reorder_level
-            ORDER BY quantity_in_stock ASC, name ASC
-            """
+            f"""
+            SELECT p.id, p.sku, p.barcode, p.name, si.store_id, s.code AS store_code,
+                   si.quantity_on_hand AS quantity_in_stock, si.reorder_level
+            FROM products p
+            JOIN store_inventory si ON si.product_id = p.id
+            JOIN stores s ON s.id = si.store_id
+            WHERE p.is_active = 1 AND si.quantity_on_hand <= si.reorder_level
+                  {store_filter}
+            ORDER BY si.quantity_on_hand ASC, p.name ASC
+            """,
+            store_params,
         ).fetchall()
 
     return [dict(row) for row in rows]
 
 
-def get_payment_method_report() -> list[ReportRow]:
+def get_payment_method_report(
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> list[ReportRow]:
     """Return refund-aware lifetime sales grouped by payment method."""
+    store_ids = _resolve_report_store_ids(session, store_ids)
+    store_filter, store_params = _store_clause(store_ids, "s")
     with get_connection() as conn:
         rows = conn.execute(
-            """
+            f"""
             WITH refunds AS (
                 SELECT sale_id, SUM(total_refunded) AS total_refunded
                 FROM sales_returns GROUP BY sale_id
@@ -237,9 +292,11 @@ def get_payment_method_report() -> list[ReportRow]:
                    COALESCE(SUM(s.total_amount - COALESCE(r.total_refunded, 0)), 0) AS total_sales
             FROM sales s
             LEFT JOIN refunds r ON r.sale_id = s.sale_id
+            WHERE 1 = 1 {store_filter}
             GROUP BY s.payment_method
             ORDER BY total_sales DESC
-            """
+            """,
+            store_params,
         ).fetchall()
 
     return [
@@ -254,17 +311,25 @@ def get_payment_method_report() -> list[ReportRow]:
     ]
 
 
-def get_inventory_valuation() -> ReportRow:
+def get_inventory_valuation(
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> ReportRow:
     """Return current inventory value using each product's moving average cost."""
+    store_ids = _resolve_report_store_ids(session, store_ids)
+    store_filter, store_params = _store_clause(store_ids, "si")
     with get_connection() as conn:
         row = conn.execute(
-            """
-            SELECT COUNT(*) AS total_products,
-                   COALESCE(SUM(quantity_in_stock), 0) AS total_units,
-                   COALESCE(SUM(quantity_in_stock * COALESCE(cost_price, 0)), 0) AS inventory_cost,
-                   COALESCE(SUM(quantity_in_stock * selling_price), 0) AS inventory_retail
-            FROM products
-            """
+            f"""
+            SELECT COUNT(DISTINCT p.id) AS total_products,
+                   COALESCE(SUM(si.quantity_on_hand), 0) AS total_units,
+                   COALESCE(SUM(si.quantity_on_hand * si.average_cost), 0) AS inventory_cost,
+                   COALESCE(SUM(si.quantity_on_hand * p.selling_price), 0) AS inventory_retail
+            FROM store_inventory si
+            JOIN products p ON p.id = si.product_id
+            WHERE 1 = 1 {store_filter}
+            """,
+            store_params,
         ).fetchone()
 
     inventory_cost = _money(row["inventory_cost"])
@@ -279,18 +344,31 @@ def get_inventory_valuation() -> ReportRow:
     }
 
 
-def get_average_cost_report(include_inactive: bool = False) -> list[ReportRow]:
+def get_average_cost_report(
+    include_inactive: bool = False,
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> list[ReportRow]:
     """Return product-level stock valuation at moving average catalog cost."""
-    active_filter = "" if include_inactive else "WHERE is_active = 1"
+    store_ids = _resolve_report_store_ids(session, store_ids)
+    filters = [] if include_inactive else ["p.is_active = 1"]
+    store_filter, store_params = _store_clause(store_ids, "si", prefix="")
+    if store_filter:
+        filters.append(store_filter.strip().removeprefix("AND "))
+    where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
     with get_connection() as conn:
         rows = conn.execute(
-            f"""SELECT id, sku, name, category_id, quantity_in_stock,
-                       COALESCE(cost_price, 0) AS average_cost,
-                       quantity_in_stock * COALESCE(cost_price, 0) AS inventory_value,
-                       is_active
-                FROM products
-                {active_filter}
-                ORDER BY name"""
+            f"""SELECT p.id, p.sku, p.name, p.category_id, si.store_id,
+                       s.code AS store_code, si.quantity_on_hand AS quantity_in_stock,
+                       si.average_cost,
+                       si.quantity_on_hand * si.average_cost AS inventory_value,
+                       p.is_active
+                FROM products p
+                JOIN store_inventory si ON si.product_id = p.id
+                JOIN stores s ON s.id = si.store_id
+                {where_clause}
+                ORDER BY p.name, s.code""",
+            store_params,
         ).fetchall()
     return [
         {
@@ -298,6 +376,8 @@ def get_average_cost_report(include_inactive: bool = False) -> list[ReportRow]:
             "sku": row["sku"],
             "name": row["name"],
             "category_id": row["category_id"],
+            "store_id": row["store_id"],
+            "store_code": row["store_code"],
             "quantity_in_stock": int(row["quantity_in_stock"]),
             "average_cost": round(float(row["average_cost"] or 0), 4),
             "inventory_value": _money(row["inventory_value"]),
@@ -307,9 +387,12 @@ def get_average_cost_report(include_inactive: bool = False) -> list[ReportRow]:
     ]
 
 
-def get_current_inventory_value() -> ReportRow:
+def get_current_inventory_value(
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> ReportRow:
     """Return the current moving-average inventory value and total units."""
-    valuation = get_inventory_valuation()
+    valuation = get_inventory_valuation(store_ids=store_ids, session=session)
     return {
         "total_units": valuation["total_units"],
         "current_inventory_value": valuation["inventory_cost"],
@@ -317,20 +400,27 @@ def get_current_inventory_value() -> ReportRow:
     }
 
 
-def get_stock_value_by_category() -> list[ReportRow]:
+def get_stock_value_by_category(
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> list[ReportRow]:
     """Return current stock units and moving-average value by category."""
+    store_ids = _resolve_report_store_ids(session, store_ids)
+    store_filter, store_params = _store_clause(store_ids, "si")
     with get_connection() as conn:
         rows = conn.execute(
-            """SELECT c.id AS category_id,
+            f"""SELECT c.id AS category_id,
                       c.name AS category_name,
-                      COUNT(p.id) AS product_count,
-                      COALESCE(SUM(p.quantity_in_stock), 0) AS total_units,
-                      COALESCE(SUM(p.quantity_in_stock * COALESCE(p.cost_price, 0)), 0)
+                      COUNT(DISTINCT p.id) AS product_count,
+                      COALESCE(SUM(si.quantity_on_hand), 0) AS total_units,
+                      COALESCE(SUM(si.quantity_on_hand * si.average_cost), 0)
                           AS inventory_value
                FROM categories c
                LEFT JOIN products p ON p.category_id = c.id AND p.is_active = 1
+               LEFT JOIN store_inventory si ON si.product_id = p.id {store_filter}
                GROUP BY c.id, c.name
-               ORDER BY c.name"""
+               ORDER BY c.name""",
+            store_params,
         ).fetchall()
     return [
         {
@@ -344,11 +434,83 @@ def get_stock_value_by_category() -> list[ReportRow]:
     ]
 
 
-def _build_period_report(start_date: str, end_date: str, top_limit: int) -> ReportRow:
+def get_branch_comparison_report(
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> list[ReportRow]:
+    """Compare sales, refunds, transactions, and inventory value by branch."""
+    normalized_ids = _resolve_report_store_ids(session, store_ids)
+    where_clause = ""
+    params: list[int] = []
+    if normalized_ids is not None:
+        placeholders = ", ".join("?" for _ in normalized_ids)
+        where_clause = f"WHERE st.id IN ({placeholders})" if normalized_ids else "WHERE 1 = 0"
+        params = normalized_ids
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""WITH sale_totals AS (
+                       SELECT store_id, COUNT(*) AS transaction_count,
+                              COALESCE(SUM(subtotal), 0) AS gross_sales,
+                              COALESCE(SUM(discount_amount), 0) AS discount_total
+                       FROM sales GROUP BY store_id
+                   ), refund_totals AS (
+                       SELECT s.store_id, COALESCE(SUM(sr.total_refunded), 0) AS refunds
+                       FROM sales_returns sr
+                       JOIN sales s ON s.sale_id = sr.sale_id
+                       GROUP BY s.store_id
+                   ), inventory_totals AS (
+                       SELECT store_id, COALESCE(SUM(quantity_on_hand), 0) AS total_units,
+                              COALESCE(SUM(quantity_on_hand * average_cost), 0) AS inventory_value
+                       FROM store_inventory GROUP BY store_id
+                   )
+                   SELECT st.id AS store_id, st.code AS store_code, st.name AS store_name,
+                          st.is_active,
+                          COALESCE(sa.transaction_count, 0) AS transaction_count,
+                          COALESCE(sa.gross_sales, 0) AS gross_sales,
+                          COALESCE(sa.discount_total, 0) AS discount_total,
+                          COALESCE(r.refunds, 0) AS refunds,
+                          COALESCE(sa.gross_sales, 0) - COALESCE(sa.discount_total, 0)
+                              - COALESCE(r.refunds, 0) AS net_sales,
+                          COALESCE(i.total_units, 0) AS total_units,
+                          COALESCE(i.inventory_value, 0) AS inventory_value
+                   FROM stores st
+                   LEFT JOIN sale_totals sa ON sa.store_id = st.id
+                   LEFT JOIN refund_totals r ON r.store_id = st.id
+                   LEFT JOIN inventory_totals i ON i.store_id = st.id
+                   {where_clause}
+                   ORDER BY net_sales DESC, st.name""",
+            params,
+        ).fetchall()
+    return [
+        {
+            "store_id": row["store_id"],
+            "store_code": row["store_code"],
+            "store_name": row["store_name"],
+            "is_active": bool(row["is_active"]),
+            "transaction_count": int(row["transaction_count"]),
+            "gross_sales": _money(row["gross_sales"]),
+            "discount_total": _money(row["discount_total"]),
+            "refunds": _money(row["refunds"]),
+            "net_sales": _money(row["net_sales"]),
+            "total_units": int(row["total_units"]),
+            "inventory_value": _money(row["inventory_value"]),
+        }
+        for row in rows
+    ]
+
+
+def _build_period_report(
+    start_date: str,
+    end_date: str,
+    top_limit: int,
+    store_ids: Optional[list[int]] = None,
+) -> ReportRow:
     _validate_limit(top_limit, allow_zero=True)
+    sale_filter, store_params = _store_clause(store_ids, "s")
+    return_filter, return_store_params = _store_clause(store_ids, "rs")
     with get_connection() as conn:
         row = conn.execute(
-            """
+            f"""
             WITH sale_totals AS (
                 SELECT COUNT(*) AS transaction_count,
                        COALESCE(SUM(subtotal), 0) AS gross_sales,
@@ -356,8 +518,9 @@ def _build_period_report(start_date: str, end_date: str, top_limit: int) -> Repo
                        COALESCE(SUM(discount_amount), 0) AS discount_total,
                        COALESCE(SUM(tax_amount), 0) AS tax_total,
                        COALESCE(SUM(subtotal - discount_amount), 0) AS merchandise_revenue
-                FROM sales
-                WHERE DATE(created_at, 'localtime') BETWEEN DATE(?) AND DATE(?)
+                FROM sales s
+                WHERE DATE(s.created_at, 'localtime') BETWEEN DATE(?) AND DATE(?)
+                      {sale_filter}
             ), sold_items AS (
                 SELECT COALESCE(SUM(si.quantity), 0) AS sold_quantity,
                        COALESCE(SUM(si.quantity * COALESCE(si.unit_cost_at_sale, 0)), 0) AS sold_cost
@@ -365,18 +528,23 @@ def _build_period_report(start_date: str, end_date: str, top_limit: int) -> Repo
                 JOIN sales s ON s.sale_id = si.sale_id
                 LEFT JOIN products p ON p.id = CAST(si.product_id AS INTEGER)
                 WHERE DATE(s.created_at, 'localtime') BETWEEN DATE(?) AND DATE(?)
+                      {sale_filter}
             ), refund_totals AS (
-                SELECT COALESCE(SUM(total_refunded), 0) AS refund_total
-                FROM sales_returns
-                WHERE DATE(created_at, 'localtime') BETWEEN DATE(?) AND DATE(?)
+                SELECT COALESCE(SUM(sr.total_refunded), 0) AS refund_total
+                FROM sales_returns sr
+                JOIN sales rs ON rs.sale_id = sr.sale_id
+                WHERE DATE(sr.created_at, 'localtime') BETWEEN DATE(?) AND DATE(?)
+                      {return_filter}
             ), returned_items AS (
                 SELECT COALESCE(SUM(sri.quantity), 0) AS returned_quantity,
                        COALESCE(SUM(sri.quantity * COALESCE(si.unit_cost_at_sale, 0)), 0) AS returned_cost
                 FROM sales_return_items sri
                 JOIN sales_returns sr ON sr.id = sri.return_id
                 JOIN sale_items si ON si.id = sri.sale_item_id
+                JOIN sales rs ON rs.sale_id = si.sale_id
                 LEFT JOIN products p ON p.id = CAST(si.product_id AS INTEGER)
                 WHERE DATE(sr.created_at, 'localtime') BETWEEN DATE(?) AND DATE(?)
+                      {return_filter}
             )
             SELECT st.transaction_count,
                    st.gross_sales,
@@ -398,14 +566,16 @@ def _build_period_report(start_date: str, end_date: str, top_limit: int) -> Repo
             CROSS JOIN returned_items ri
             """,
             (
-                start_date, end_date,
-                start_date, end_date,
-                start_date, end_date,
-                start_date, end_date,
+                start_date, end_date, *store_params,
+                start_date, end_date, *store_params,
+                start_date, end_date, *return_store_params,
+                start_date, end_date, *return_store_params,
             ),
         ).fetchone()
         top_products = (
-            _fetch_period_product_metrics(conn, start_date, end_date, top_limit)
+            _fetch_period_product_metrics(
+                conn, start_date, end_date, top_limit, store_ids=store_ids
+            )
             if top_limit
             else []
         )
@@ -438,9 +608,12 @@ def _fetch_period_product_metrics(
     start_date: str,
     end_date: str,
     limit: int,
+    store_ids: Optional[list[int]] = None,
 ) -> list[ReportRow]:
+    sale_filter, store_params = _store_clause(store_ids, "s")
+    return_filter, return_store_params = _store_clause(store_ids, "rs")
     rows = conn.execute(
-        """
+        f"""
         WITH activity AS (
             SELECT p.id, p.sku, p.name,
                    si.quantity AS item_delta,
@@ -453,6 +626,7 @@ def _fetch_period_product_metrics(
             JOIN sales s ON s.sale_id = si.sale_id
             JOIN products p ON p.id = CAST(si.product_id AS INTEGER)
             WHERE DATE(s.created_at, 'localtime') BETWEEN DATE(?) AND DATE(?)
+                  {sale_filter}
             UNION ALL
             SELECT p.id, p.sku, p.name,
                    -sri.quantity AS item_delta,
@@ -461,8 +635,10 @@ def _fetch_period_product_metrics(
             FROM sales_return_items sri
             JOIN sales_returns sr ON sr.id = sri.return_id
             JOIN sale_items si ON si.id = sri.sale_item_id
+            JOIN sales rs ON rs.sale_id = si.sale_id
             JOIN products p ON p.id = CAST(si.product_id AS INTEGER)
             WHERE DATE(sr.created_at, 'localtime') BETWEEN DATE(?) AND DATE(?)
+                  {return_filter}
         )
         SELECT id, sku, name,
                SUM(item_delta) AS items_sold,
@@ -474,7 +650,11 @@ def _fetch_period_product_metrics(
         ORDER BY items_sold DESC, net_revenue DESC, name ASC
         LIMIT ?
         """,
-        (start_date, end_date, start_date, end_date, limit),
+        (
+            start_date, end_date, *store_params,
+            start_date, end_date, *return_store_params,
+            limit,
+        ),
     ).fetchall()
     return [
         {
@@ -489,9 +669,14 @@ def _fetch_period_product_metrics(
     ]
 
 
-def _fetch_lifetime_product_metrics(conn: Any) -> list[ReportRow]:
+def _fetch_lifetime_product_metrics(
+    conn: Any,
+    store_ids: Optional[list[int]] = None,
+) -> list[ReportRow]:
+    sale_filter, store_params = _store_clause(store_ids, "s")
+    return_filter, return_store_params = _store_clause(store_ids, "rs")
     rows = conn.execute(
-        """
+        f"""
         WITH sold AS (
             SELECT CAST(si.product_id AS INTEGER) AS product_id,
                    SUM(si.quantity) AS sold_quantity,
@@ -503,6 +688,7 @@ def _fetch_lifetime_product_metrics(conn: Any) -> list[ReportRow]:
                    MAX(DATE(s.created_at, 'localtime')) AS last_sold_at
             FROM sale_items si
             JOIN sales s ON s.sale_id = si.sale_id
+            WHERE 1 = 1 {sale_filter}
             GROUP BY CAST(si.product_id AS INTEGER)
         ), returned AS (
             SELECT CAST(si.product_id AS INTEGER) AS product_id,
@@ -511,6 +697,8 @@ def _fetch_lifetime_product_metrics(conn: Any) -> list[ReportRow]:
                    SUM(sri.quantity * COALESCE(si.unit_cost_at_sale, 0)) AS returned_cost
             FROM sales_return_items sri
             JOIN sale_items si ON si.id = sri.sale_item_id
+            JOIN sales rs ON rs.sale_id = si.sale_id
+            WHERE 1 = 1 {return_filter}
             GROUP BY CAST(si.product_id AS INTEGER)
         )
         SELECT p.id, p.sku, p.name, p.is_active,
@@ -523,7 +711,8 @@ def _fetch_lifetime_product_metrics(conn: Any) -> list[ReportRow]:
         FROM products p
         LEFT JOIN sold s ON s.product_id = p.id
         LEFT JOIN returned r ON r.product_id = p.id
-        """
+        """,
+        (*store_params, *return_store_params),
     ).fetchall()
     return [
         {
@@ -547,6 +736,74 @@ def _normalize_date(value: DateInput, field_name: str) -> str:
         return date.fromisoformat(str(value)).isoformat()
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{field_name} must be a valid YYYY-MM-DD date.") from exc
+
+
+def _normalize_store_ids(store_ids: Optional[list[int]]) -> Optional[list[int]]:
+    if store_ids is None:
+        return None
+    try:
+        return list(dict.fromkeys(int(store_id) for store_id in store_ids))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("store_ids must contain valid integer store identifiers.") from exc
+
+
+def _resolve_report_store_ids(
+    session: Any,
+    store_ids: Optional[list[int]],
+) -> Optional[list[int]]:
+    requested = _normalize_store_ids(store_ids)
+    if session is None:
+        if requested is not None:
+            with get_connection() as conn:
+                valid_ids = {
+                    row["id"] for row in conn.execute("SELECT id FROM stores").fetchall()
+                }
+            if not set(requested).issubset(valid_ids):
+                raise ValueError("Report references an unknown store.")
+        return requested
+
+    from auth import AuthorizationError, ROLE_ADMIN, ROLE_CASHIER, validate_session
+
+    session = validate_session(session)
+    with get_connection() as conn:
+        all_store_ids = {
+            row["id"] for row in conn.execute("SELECT id FROM stores").fetchall()
+        }
+        if session.role == ROLE_ADMIN:
+            allowed_store_ids = all_store_ids
+        elif session.role == ROLE_CASHIER:
+            allowed_store_ids = {session.store_id}
+        else:
+            allowed_store_ids = {
+                row["store_id"]
+                for row in conn.execute(
+                    "SELECT store_id FROM user_store_access WHERE user_id = ?",
+                    (session.user_id,),
+                ).fetchall()
+            }
+    if requested is not None:
+        if not set(requested).issubset(all_store_ids):
+            raise ValueError("Report references an unknown store.")
+        if not set(requested).issubset(allowed_store_ids):
+            raise AuthorizationError("Report includes a store outside this user's access.")
+        return requested
+    if session.role == ROLE_ADMIN:
+        return None
+    return sorted(allowed_store_ids)
+
+
+def _store_clause(
+    store_ids: Optional[list[int]],
+    alias: str,
+    prefix: str = "AND",
+) -> tuple[str, list[int]]:
+    normalized = _normalize_store_ids(store_ids)
+    if normalized is None:
+        return "", []
+    if not normalized:
+        return f" {prefix} 1 = 0".rstrip(), []
+    placeholders = ", ".join("?" for _ in normalized)
+    return f" {prefix} {alias}.store_id IN ({placeholders})".rstrip(), normalized
 
 
 def _validate_limit(limit: int, allow_zero: bool = False) -> None:

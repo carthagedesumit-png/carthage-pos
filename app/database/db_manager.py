@@ -61,9 +61,12 @@ def initialize_database():
         cursor = conn.cursor()
         migrate_users_table(cursor)
         ensure_system_user(cursor)
+        migrate_stores_and_assignments(cursor)
         migrate_categories_table(cursor)
         migrate_suppliers_table(cursor)
         migrate_products_table(cursor)
+        migrate_store_inventory(cursor)
+        migrate_stock_transfers(cursor)
         migrate_stock_movements_table(cursor)
         migrate_procurement_tables(cursor)
         migrate_sales_table(cursor)
@@ -122,6 +125,53 @@ def ensure_system_user(cursor):
     cursor.execute("""
         INSERT OR IGNORE INTO users (username, password_hash, full_name, role, is_active)
         VALUES ('system', 'SYSTEM_ACCOUNT_NO_LOGIN', 'System Account', 'admin', 0)
+    """)
+
+
+def migrate_stores_and_assignments(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            name TEXT NOT NULL,
+            address TEXT,
+            phone TEXT,
+            email TEXT,
+            manager_user_id INTEGER,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (manager_user_id) REFERENCES users (id)
+        );
+    """)
+    cursor.execute("""
+        INSERT OR IGNORE INTO stores (id, code, name, is_active)
+        VALUES (1, 'MAIN', 'Main Store', 1)
+    """)
+    default_store_id = cursor.execute(
+        "SELECT id FROM stores WHERE code = 'MAIN' COLLATE NOCASE"
+    ).fetchone()[0]
+
+    user_columns = get_table_columns(cursor, "users")
+    if "home_store_id" not in user_columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN home_store_id INTEGER REFERENCES stores(id)")
+    cursor.execute(
+        "UPDATE users SET home_store_id = ? WHERE home_store_id IS NULL",
+        (default_store_id,),
+    )
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_store_access (
+            user_id INTEGER NOT NULL,
+            store_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, store_id),
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (store_id) REFERENCES stores (id)
+        );
+    """)
+    cursor.execute("""
+        INSERT OR IGNORE INTO user_store_access (user_id, store_id)
+        SELECT id, home_store_id FROM users WHERE home_store_id IS NOT NULL
     """)
 
 
@@ -211,6 +261,131 @@ def migrate_products_table(cursor):
         """, (1, 1, row["product_id"], row["product_id"], row["name"], 0, row["price"], row["stock"], 0))
 
 
+def migrate_store_inventory(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS store_inventory (
+            store_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            quantity_on_hand INTEGER NOT NULL DEFAULT 0 CHECK (quantity_on_hand >= 0),
+            reorder_level INTEGER NOT NULL DEFAULT 0 CHECK (reorder_level >= 0),
+            average_cost REAL NOT NULL DEFAULT 0 CHECK (average_cost >= 0),
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (store_id, product_id),
+            FOREIGN KEY (store_id) REFERENCES stores (id),
+            FOREIGN KEY (product_id) REFERENCES products (id)
+        );
+    """)
+    default_store_id = cursor.execute(
+        "SELECT id FROM stores WHERE code = 'MAIN' COLLATE NOCASE"
+    ).fetchone()[0]
+    cursor.execute("""
+        INSERT OR IGNORE INTO store_inventory (
+            store_id, product_id, quantity_on_hand, reorder_level, average_cost
+        )
+        SELECT ?, id, quantity_in_stock, reorder_level, COALESCE(cost_price, 0)
+        FROM products
+    """, (default_store_id,))
+
+
+def migrate_stock_transfers(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stock_transfers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reference_number TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            source_store_id INTEGER NOT NULL,
+            destination_store_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'REQUESTED'
+                CHECK (status IN ('REQUESTED', 'APPROVED', 'IN_TRANSIT', 'RECEIVED', 'CANCELLED')),
+            requested_by INTEGER NOT NULL,
+            approved_by INTEGER,
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            approved_at DATETIME,
+            cancelled_at DATETIME,
+            FOREIGN KEY (source_store_id) REFERENCES stores (id),
+            FOREIGN KEY (destination_store_id) REFERENCES stores (id),
+            FOREIGN KEY (requested_by) REFERENCES users (id),
+            FOREIGN KEY (approved_by) REFERENCES users (id),
+            CHECK (source_store_id != destination_store_id)
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stock_transfer_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            transfer_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            requested_quantity INTEGER NOT NULL CHECK (requested_quantity > 0),
+            dispatched_quantity INTEGER NOT NULL DEFAULT 0,
+            received_quantity INTEGER NOT NULL DEFAULT 0,
+            dispatched_value REAL NOT NULL DEFAULT 0,
+            received_value REAL NOT NULL DEFAULT 0,
+            FOREIGN KEY (transfer_id) REFERENCES stock_transfers (id),
+            FOREIGN KEY (product_id) REFERENCES products (id),
+            UNIQUE (transfer_id, product_id),
+            CHECK (received_quantity <= dispatched_quantity),
+            CHECK (dispatched_quantity <= requested_quantity)
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stock_transfer_dispatches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            transfer_id INTEGER NOT NULL,
+            dispatched_by INTEGER NOT NULL,
+            notes TEXT,
+            dispatched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (transfer_id) REFERENCES stock_transfers (id),
+            FOREIGN KEY (dispatched_by) REFERENCES users (id)
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stock_transfer_dispatch_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dispatch_id INTEGER NOT NULL,
+            transfer_item_id INTEGER NOT NULL,
+            quantity INTEGER NOT NULL CHECK (quantity > 0),
+            FOREIGN KEY (dispatch_id) REFERENCES stock_transfer_dispatches (id),
+            FOREIGN KEY (transfer_item_id) REFERENCES stock_transfer_items (id),
+            UNIQUE (dispatch_id, transfer_item_id)
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stock_transfer_receipts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            transfer_id INTEGER NOT NULL,
+            received_by INTEGER NOT NULL,
+            notes TEXT,
+            received_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (transfer_id) REFERENCES stock_transfers (id),
+            FOREIGN KEY (received_by) REFERENCES users (id)
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stock_transfer_receipt_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            receipt_id INTEGER NOT NULL,
+            transfer_item_id INTEGER NOT NULL,
+            quantity INTEGER NOT NULL CHECK (quantity > 0),
+            FOREIGN KEY (receipt_id) REFERENCES stock_transfer_receipts (id),
+            FOREIGN KEY (transfer_item_id) REFERENCES stock_transfer_items (id),
+            UNIQUE (receipt_id, transfer_item_id)
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stock_transfer_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            transfer_id INTEGER NOT NULL,
+            from_status TEXT,
+            to_status TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (transfer_id) REFERENCES stock_transfers (id),
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        );
+    """)
+
+
 def migrate_stock_movements_table(cursor):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS stock_movements (
@@ -221,12 +396,28 @@ def migrate_stock_movements_table(cursor):
             previous_quantity INTEGER NOT NULL,
             new_quantity INTEGER NOT NULL,
             user_id INTEGER,
+            store_id INTEGER,
+            transfer_id INTEGER,
             notes TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (product_id) REFERENCES products (id),
-            FOREIGN KEY (user_id) REFERENCES users (id)
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (store_id) REFERENCES stores (id),
+            FOREIGN KEY (transfer_id) REFERENCES stock_transfers (id)
         );
     """)
+    columns = get_table_columns(cursor, "stock_movements")
+    if "store_id" not in columns:
+        cursor.execute("ALTER TABLE stock_movements ADD COLUMN store_id INTEGER REFERENCES stores(id)")
+    if "transfer_id" not in columns:
+        cursor.execute("ALTER TABLE stock_movements ADD COLUMN transfer_id INTEGER REFERENCES stock_transfers(id)")
+    default_store_id = cursor.execute(
+        "SELECT id FROM stores WHERE code = 'MAIN' COLLATE NOCASE"
+    ).fetchone()[0]
+    cursor.execute(
+        "UPDATE stock_movements SET store_id = ? WHERE store_id IS NULL",
+        (default_store_id,),
+    )
 
 
 def migrate_sales_table(cursor):
@@ -237,6 +428,8 @@ def migrate_sales_table(cursor):
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             user_id INTEGER,
+            store_id INTEGER,
+            register_name TEXT NOT NULL DEFAULT 'REGISTER-1',
             username TEXT NOT NULL DEFAULT 'system',
             cashier_name TEXT NOT NULL DEFAULT 'system',
             subtotal REAL NOT NULL DEFAULT 0,
@@ -250,6 +443,7 @@ def migrate_sales_table(cursor):
             amount_paid REAL NOT NULL DEFAULT 0,
             change_given REAL NOT NULL DEFAULT 0,
             FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (store_id) REFERENCES stores (id),
             FOREIGN KEY (username) REFERENCES users (username)
         );
     """)
@@ -261,6 +455,8 @@ def migrate_sales_table(cursor):
         "cashier_name": "TEXT NOT NULL DEFAULT 'system'",
         "username": "TEXT NOT NULL DEFAULT 'system'",
         "user_id": "INTEGER",
+        "store_id": "INTEGER REFERENCES stores(id)",
+        "register_name": "TEXT NOT NULL DEFAULT 'REGISTER-1'",
         "discount_amount": "REAL NOT NULL DEFAULT 0",
         "tax_amount": "REAL NOT NULL DEFAULT 0",
         "total_amount": "REAL NOT NULL DEFAULT 0",
@@ -283,6 +479,13 @@ def migrate_sales_table(cursor):
         SET user_id = (SELECT id FROM users WHERE users.username = sales.username)
         WHERE user_id IS NULL
     """)
+    default_store_id = cursor.execute(
+        "SELECT id FROM stores WHERE code = 'MAIN' COLLATE NOCASE"
+    ).fetchone()[0]
+    cursor.execute(
+        "UPDATE sales SET store_id = ? WHERE store_id IS NULL",
+        (default_store_id,),
+    )
 
     rows = cursor.execute(
         "SELECT sale_id, COALESCE(created_at, timestamp, CURRENT_TIMESTAMP) AS sale_date FROM sales WHERE receipt_number IS NULL OR receipt_number = '' ORDER BY sale_id"
@@ -328,6 +531,7 @@ def migrate_procurement_tables(cursor):
         CREATE TABLE IF NOT EXISTS purchase_orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             supplier_id INTEGER NOT NULL,
+            store_id INTEGER NOT NULL,
             reference_number TEXT NOT NULL COLLATE NOCASE UNIQUE,
             status TEXT NOT NULL DEFAULT 'DRAFT'
                 CHECK (status IN ('DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'FULLY_RECEIVED', 'CANCELLED')),
@@ -339,9 +543,20 @@ def migrate_procurement_tables(cursor):
             submitted_at DATETIME,
             cancelled_at DATETIME,
             FOREIGN KEY (supplier_id) REFERENCES suppliers (id),
+            FOREIGN KEY (store_id) REFERENCES stores (id),
             FOREIGN KEY (created_by) REFERENCES users (id)
         );
     """)
+    purchase_order_columns = get_table_columns(cursor, "purchase_orders")
+    if "store_id" not in purchase_order_columns:
+        cursor.execute("ALTER TABLE purchase_orders ADD COLUMN store_id INTEGER REFERENCES stores(id)")
+    default_store_id = cursor.execute(
+        "SELECT id FROM stores WHERE code = 'MAIN' COLLATE NOCASE"
+    ).fetchone()[0]
+    cursor.execute(
+        "UPDATE purchase_orders SET store_id = ? WHERE store_id IS NULL",
+        (default_store_id,),
+    )
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS purchase_order_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -458,4 +673,14 @@ def seed_initial_data():
                 ) VALUES (1, 1, ?, ?, ?, 0, ?, ?, 0, 1)""",
                 sample_items
             )
+            default_store_id = cursor.execute(
+                "SELECT id FROM stores WHERE code = 'MAIN' COLLATE NOCASE"
+            ).fetchone()[0]
+            cursor.execute("""
+                INSERT OR IGNORE INTO store_inventory (
+                    store_id, product_id, quantity_on_hand, reorder_level, average_cost
+                )
+                SELECT ?, id, quantity_in_stock, reorder_level, COALESCE(cost_price, 0)
+                FROM products
+            """, (default_store_id,))
             print("Baseline stock seeded into database.")

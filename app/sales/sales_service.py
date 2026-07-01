@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 
-from auth import AuthorizationError, INVENTORY_ROLES, validate_session
+from auth import AuthorizationError, INVENTORY_ROLES, require_store_access, validate_session
 from app.database.db_manager import get_connection
 from app.inventory.inventory_service import (
     MOVEMENT_RETURN,
@@ -21,7 +21,7 @@ DISCOUNT_PERCENTAGE = "PERCENTAGE"
 DISCOUNT_FIXED = "FIXED"
 
 
-def calculate_totals(items, discount_type=None, discount_value=0, tax_rate=0):
+def calculate_totals(items, discount_type=None, discount_value=0, tax_rate=0, store_id=None):
     if not items:
         raise ValueError("Sale must contain at least one item.")
 
@@ -32,7 +32,7 @@ def calculate_totals(items, discount_type=None, discount_value=0, tax_rate=0):
             product_id = item.get("product_id")
             quantity = int(item.get("quantity", 0))
             validate_positive_quantity(quantity)
-            product = get_product_by_id(product_id, conn=conn)
+            product = get_product_by_id(product_id, conn=conn, store_id=store_id)
             if not product or not product["is_active"]:
                 raise ValueError("Product not found or inactive.")
             unit_price = float(product["selling_price"])
@@ -126,24 +126,37 @@ def create_sale(
     discount_type=None,
     discount_value=0,
     tax_rate=0,
+    store_id=None,
+    register_name="REGISTER-1",
 ):
     session = require_session(session)
+    store_id = int(store_id or session.store_id)
+    session = require_store_access(session, store_id)
     if discount_value and session.role not in INVENTORY_ROLES:
         raise AuthorizationError("Only admin and manager users can apply sale discounts.")
-    totals = calculate_totals(items, discount_type=discount_type, discount_value=discount_value, tax_rate=tax_rate)
+    totals = calculate_totals(
+        items,
+        discount_type=discount_type,
+        discount_value=discount_value,
+        tax_rate=tax_rate,
+        store_id=store_id,
+    )
     payment = process_payment(totals["total_amount"], payment_method, amount_paid)
 
     with get_connection() as conn:
         receipt_number = generate_receipt_number(conn)
         cursor = conn.execute(
             """INSERT INTO sales (
-                receipt_number, user_id, username, cashier_name, subtotal, discount_amount,
+                receipt_number, user_id, store_id, register_name, username, cashier_name,
+                subtotal, discount_amount,
                 tax, tax_amount, total, total_amount, payment_method, payment_status,
                 amount_paid, change_given
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 receipt_number,
                 session.user_id,
+                store_id,
+                str(register_name or "REGISTER-1").strip() or "REGISTER-1",
                 session.username,
                 session.username,
                 totals["subtotal"],
@@ -165,7 +178,8 @@ def create_sale(
                 item["product_id"],
                 item["quantity"],
                 session.user_id,
-                notes=f"Sale {receipt_number}"
+                notes=f"Sale {receipt_number}",
+                store_id=store_id,
             )
             conn.execute(
                 """INSERT INTO sale_items (
@@ -211,6 +225,7 @@ def process_return(session, sale_id, return_items, reason):
         sale = conn.execute("SELECT * FROM sales WHERE sale_id = ?", (sale_id,)).fetchone()
         if not sale:
             raise ValueError("Sale not found.")
+        session = require_store_access(session, sale["store_id"], manage=True)
 
         prepared_items = []
         total_refunded = 0.0
@@ -258,7 +273,8 @@ def process_return(session, sale_id, return_items, reason):
                 int(sale_item["product_id"]),
                 item["quantity"],
                 session.user_id,
-                notes=f"Return #{return_id} for sale #{sale_id}"
+                notes=f"Return #{return_id} for sale #{sale_id}",
+                store_id=sale["store_id"],
             )
 
     return get_return_data(return_id)
@@ -277,17 +293,19 @@ def refund_sale(session, sale_id, reason="Full sale refund"):
     )
 
 
-def restore_return_stock(conn, product_id, quantity, user_id, notes=None):
-    product = get_product_by_id(product_id, conn=conn)
+def restore_return_stock(conn, product_id, quantity, user_id, notes=None, store_id=None):
+    product = get_product_by_id(product_id, conn=conn, store_id=store_id)
     if not product:
         raise ValueError("Product not found.")
     previous_quantity = product["quantity_in_stock"]
     new_quantity = previous_quantity + int(quantity)
-    conn.execute(
-        "UPDATE products SET quantity_in_stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (new_quantity, product_id)
+    from app.inventory.inventory_service import update_store_inventory_balance
+
+    update_store_inventory_balance(conn, store_id, product_id, new_quantity)
+    log_stock_movement(
+        conn, product_id, MOVEMENT_RETURN, int(quantity), previous_quantity,
+        new_quantity, user_id, notes, store_id=store_id,
     )
-    log_stock_movement(conn, product_id, MOVEMENT_RETURN, int(quantity), previous_quantity, new_quantity, user_id, notes)
 
 
 def get_return_data(return_id):

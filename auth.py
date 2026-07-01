@@ -2,6 +2,7 @@ import getpass
 import os
 from dataclasses import dataclass
 from sqlite3 import IntegrityError
+from typing import Optional
 
 import bcrypt
 
@@ -29,6 +30,7 @@ class UserSession:
     username: str
     full_name: str
     role: str
+    store_id: Optional[int] = None
 
     def can_manage_users(self):
         return self.role in USER_MANAGEMENT_ROLES
@@ -127,12 +129,14 @@ def verify_password(password, password_hash):
     return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
 
 
-def row_to_session(row):
+def row_to_session(row, store_id=None):
+    active_store_id = store_id if store_id is not None else row["home_store_id"]
     return UserSession(
         user_id=row["id"],
         username=row["username"],
         full_name=row["full_name"],
-        role=row["role"]
+        role=row["role"],
+        store_id=active_store_id,
     )
 
 
@@ -154,9 +158,16 @@ def bootstrap_admin(username, password, full_name):
                     "Administrator bootstrap is only available before the first user is created."
                 )
             cursor = conn.execute(
-                """INSERT INTO users (username, password_hash, full_name, role, is_active)
-                   VALUES (?, ?, ?, ?, 1)""",
-                (username, password_hash, full_name.strip(), ROLE_ADMIN),
+                """INSERT INTO users (
+                       username, password_hash, full_name, role, is_active, home_store_id
+                   ) VALUES (?, ?, ?, ?, 1, ?)""",
+                (
+                    username,
+                    password_hash,
+                    full_name.strip(),
+                    ROLE_ADMIN,
+                    _default_store_id(conn),
+                ),
             )
             user_id = cursor.lastrowid
     except IntegrityError as exc:
@@ -165,12 +176,25 @@ def bootstrap_admin(username, password, full_name):
     return get_user_by_id(user_id)
 
 
-def create_user(username, password, full_name, role=ROLE_CASHIER, acting_session=None):
-    require_user_management(acting_session)
-    return _insert_user(username, password, full_name, role)
+def create_user(
+    username,
+    password,
+    full_name,
+    role=ROLE_CASHIER,
+    acting_session=None,
+    home_store_id=None,
+):
+    acting_session = require_user_management(acting_session)
+    return _insert_user(
+        username,
+        password,
+        full_name,
+        role,
+        home_store_id=home_store_id or acting_session.store_id,
+    )
 
 
-def _insert_user(username, password, full_name, role):
+def _insert_user(username, password, full_name, role, home_store_id=None):
     username = normalize_username(username)
     validate_role(role)
     if not full_name or not full_name.strip():
@@ -178,30 +202,38 @@ def _insert_user(username, password, full_name, role):
 
     try:
         with get_connection() as conn:
+            home_store_id = home_store_id or _default_store_id(conn)
+            _require_active_store(conn, home_store_id)
             cursor = conn.execute(
-                """INSERT INTO users (username, password_hash, full_name, role, is_active)
-                   VALUES (?, ?, ?, ?, 1)""",
-                (username, hash_password(password), full_name.strip(), role)
+                """INSERT INTO users (
+                       username, password_hash, full_name, role, is_active, home_store_id
+                   ) VALUES (?, ?, ?, ?, 1, ?)""",
+                (username, hash_password(password), full_name.strip(), role, home_store_id)
             )
             user_id = cursor.lastrowid
+            conn.execute(
+                "INSERT OR IGNORE INTO user_store_access (user_id, store_id) VALUES (?, ?)",
+                (user_id, home_store_id),
+            )
     except IntegrityError as exc:
         raise ValueError(f"Username already exists: {username}") from exc
 
     return get_user_by_id(user_id)
 
 
-def authenticate_user(username, password):
+def authenticate_user(username, password, store_id=None):
     username = normalize_username(username)
     with get_connection() as conn:
         row = conn.execute(
-            """SELECT id, username, password_hash, full_name, role, is_active
+            """SELECT id, username, password_hash, full_name, role, is_active, home_store_id
                FROM users WHERE username = ?""",
             (username,)
         ).fetchone()
         if not row or not row["is_active"] or not verify_password(password, row["password_hash"]):
             return None
         conn.execute("UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
-        return row_to_session(row)
+        session = row_to_session(row, store_id=store_id)
+        return validate_session(session)
 
 
 def change_password(user_id, new_password, acting_session=None):
@@ -238,7 +270,8 @@ def reactivate_user(user_id, acting_session=None):
 def get_user_by_id(user_id):
     with get_connection() as conn:
         row = conn.execute(
-            """SELECT id, username, full_name, role, is_active, created_at, last_login
+            """SELECT id, username, full_name, role, is_active, created_at, last_login,
+                      home_store_id
                FROM users WHERE id = ?""",
             (user_id,)
         ).fetchone()
@@ -252,10 +285,12 @@ def require_user_management(session):
     return session
 
 
-def require_inventory_management(session):
+def require_inventory_management(session, store_id=None):
     session = validate_session(session)
     if not session.can_manage_inventory():
         raise AuthorizationError("Only admin and manager users can manage inventory.")
+    if store_id is not None:
+        require_store_access(session, store_id, manage=True)
     return session
 
 
@@ -265,10 +300,23 @@ def validate_session(session):
         raise AuthorizationError("A valid authenticated user session is required.")
     with get_connection() as conn:
         row = conn.execute(
-            """SELECT id, username, full_name, role, is_active
+            """SELECT id, username, full_name, role, is_active, home_store_id
                FROM users WHERE id = ?""",
             (session.user_id,),
         ).fetchone()
+        if row:
+            active_store_id = session.store_id or row["home_store_id"]
+            store = conn.execute(
+                "SELECT id, is_active FROM stores WHERE id = ?", (active_store_id,)
+            ).fetchone()
+            has_assignment = conn.execute(
+                "SELECT 1 FROM user_store_access WHERE user_id = ? AND store_id = ?",
+                (row["id"], active_store_id),
+            ).fetchone()
+        else:
+            active_store_id = None
+            store = None
+            has_assignment = None
     if (
         not row
         or not row["is_active"]
@@ -276,7 +324,49 @@ def validate_session(session):
         or row["role"] != session.role
     ):
         raise AuthorizationError("This user session is no longer valid.")
-    return row_to_session(row)
+    if not store or not store["is_active"]:
+        raise AuthorizationError("The selected store is inactive or unavailable.")
+    if row["role"] == ROLE_CASHIER and active_store_id != row["home_store_id"]:
+        raise AuthorizationError("Cashiers may only operate in their assigned home store.")
+    if row["role"] == ROLE_MANAGER and not has_assignment:
+        raise AuthorizationError("Manager is not assigned to the selected store.")
+    return row_to_session(row, store_id=active_store_id)
+
+
+def switch_store(session, store_id):
+    """Return a revalidated session scoped to an authorized active store."""
+    session = validate_session(session)
+    candidate = UserSession(
+        user_id=session.user_id,
+        username=session.username,
+        full_name=session.full_name,
+        role=session.role,
+        store_id=int(store_id),
+    )
+    return validate_session(candidate)
+
+
+def require_store_access(session, store_id, manage=False):
+    """Require access to one store, with manager/admin rights when requested."""
+    scoped = switch_store(session, store_id)
+    if manage and scoped.role not in INVENTORY_ROLES:
+        raise AuthorizationError("Only admin and manager users can manage stores.")
+    return scoped
+
+
+def _default_store_id(conn):
+    row = conn.execute("SELECT id FROM stores WHERE code = 'MAIN' COLLATE NOCASE").fetchone()
+    if not row:
+        raise ValueError("Default store is not configured.")
+    return row["id"]
+
+
+def _require_active_store(conn, store_id):
+    row = conn.execute(
+        "SELECT id FROM stores WHERE id = ? AND is_active = 1", (store_id,)
+    ).fetchone()
+    if not row:
+        raise ValueError("Store not found or inactive.")
 
 
 def normalize_username(username):

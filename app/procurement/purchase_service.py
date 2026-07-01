@@ -4,9 +4,15 @@ import math
 from sqlite3 import IntegrityError
 from typing import Any, Optional
 
-from auth import require_inventory_management
+from auth import require_inventory_management, require_store_access
 from app.database.db_manager import get_connection
-from app.inventory.inventory_service import MOVEMENT_PURCHASE, log_stock_movement
+from app.inventory.inventory_service import (
+    MOVEMENT_PURCHASE,
+    ensure_store_inventory,
+    get_store_inventory,
+    log_stock_movement,
+    update_store_inventory_balance,
+)
 
 
 STATUS_DRAFT = "DRAFT"
@@ -25,9 +31,12 @@ def create_purchase_order(
     line_items: list[dict[str, Any]],
     expected_delivery_date: Optional[str] = None,
     notes: Optional[str] = None,
+    store_id: Optional[int] = None,
 ) -> PurchaseOrder:
     """Create a draft purchase order with validated product lines."""
     session = require_inventory_management(session)
+    store_id = int(store_id or session.store_id)
+    session = require_store_access(session, store_id, manage=True)
     reference_number = _required(reference_number, "Reference number")
     expected_delivery_date = _normalize_optional_date(expected_delivery_date)
     if not line_items:
@@ -46,11 +55,12 @@ def create_purchase_order(
             prepared_items = _prepare_order_items(conn, line_items)
             cursor = conn.execute(
                 """INSERT INTO purchase_orders (
-                       supplier_id, reference_number, status, expected_delivery_date,
+                       supplier_id, store_id, reference_number, status, expected_delivery_date,
                        created_by, notes
-                   ) VALUES (?, ?, ?, ?, ?, ?)""",
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     supplier_id,
+                    store_id,
                     reference_number,
                     STATUS_DRAFT,
                     expected_delivery_date,
@@ -82,8 +92,14 @@ def create_purchase_order(
 
 def submit_purchase_order(session: Any, purchase_order_id: int) -> PurchaseOrder:
     """Move a draft purchase order into the receivable workflow."""
-    require_inventory_management(session)
+    session = require_inventory_management(session)
     with get_connection() as conn:
+        order = conn.execute(
+            "SELECT store_id FROM purchase_orders WHERE id = ?", (purchase_order_id,)
+        ).fetchone()
+        if not order:
+            raise ValueError("Purchase order not found.")
+        require_store_access(session, order["store_id"], manage=True)
         cursor = conn.execute(
             """UPDATE purchase_orders
                SET status = ?, submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
@@ -97,8 +113,14 @@ def submit_purchase_order(session: Any, purchase_order_id: int) -> PurchaseOrder
 
 def cancel_purchase_order(session: Any, purchase_order_id: int) -> PurchaseOrder:
     """Cancel an unreceived draft or submitted purchase order."""
-    require_inventory_management(session)
+    session = require_inventory_management(session)
     with get_connection() as conn:
+        order = conn.execute(
+            "SELECT store_id FROM purchase_orders WHERE id = ?", (purchase_order_id,)
+        ).fetchone()
+        if not order:
+            raise ValueError("Purchase order not found.")
+        require_store_access(session, order["store_id"], manage=True)
         cursor = conn.execute(
             """UPDATE purchase_orders
                SET status = ?, cancelled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
@@ -134,6 +156,9 @@ def receive_purchase_order(
             raise ValueError("Purchase order not found.")
         if purchase_order["status"] not in RECEIVABLE_STATUSES:
             raise ValueError("Purchase order is not open for receiving.")
+        session = require_store_access(
+            session, purchase_order["store_id"], manage=True
+        )
 
         prepared_items = _prepare_receipt_items(conn, purchase_order_id, line_items)
         sequence = conn.execute(
@@ -150,13 +175,17 @@ def receive_purchase_order(
         receipt_id = cursor.lastrowid
 
         for item in prepared_items:
-            product = conn.execute(
-                "SELECT * FROM products WHERE id = ?", (item["product_id"],)
-            ).fetchone()
-            if not product:
-                raise ValueError("Product not found during receipt processing.")
-            previous_quantity = int(product["quantity_in_stock"])
-            previous_cost = float(product["cost_price"] or 0)
+            ensure_store_inventory(
+                conn,
+                purchase_order["store_id"],
+                item["product_id"],
+                average_cost=item["unit_cost"],
+            )
+            inventory = get_store_inventory(
+                item["product_id"], purchase_order["store_id"], conn=conn
+            )
+            previous_quantity = int(inventory["quantity_on_hand"])
+            previous_cost = float(inventory["average_cost"] or 0)
             new_quantity = previous_quantity + item["quantity"]
             new_cost = _average_cost(
                 previous_quantity,
@@ -164,17 +193,16 @@ def receive_purchase_order(
                 item["quantity"],
                 item["unit_cost"],
             )
+            update_store_inventory_balance(
+                conn,
+                purchase_order["store_id"],
+                item["product_id"],
+                new_quantity,
+                average_cost=new_cost,
+            )
             conn.execute(
-                """UPDATE products
-                   SET quantity_in_stock = ?, cost_price = ?, supplier_id = ?,
-                       updated_at = CURRENT_TIMESTAMP
-                   WHERE id = ?""",
-                (
-                    new_quantity,
-                    new_cost,
-                    purchase_order["supplier_id"],
-                    item["product_id"],
-                ),
+                "UPDATE products SET supplier_id = ? WHERE id = ?",
+                (purchase_order["supplier_id"], item["product_id"]),
             )
             conn.execute(
                 """UPDATE purchase_order_items
@@ -207,6 +235,7 @@ def receive_purchase_order(
                 new_quantity,
                 session.user_id,
                 f"Receipt {receipt_number} for PO {purchase_order['reference_number']}",
+                store_id=purchase_order["store_id"],
             )
 
         outstanding = conn.execute(
