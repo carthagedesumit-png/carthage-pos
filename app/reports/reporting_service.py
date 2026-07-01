@@ -140,7 +140,7 @@ def get_cashier_performance_report() -> list[ReportRow]:
             ), sold_items AS (
                 SELECT s.user_id,
                        COALESCE(SUM(si.quantity), 0) AS sold_quantity,
-                       COALESCE(SUM(si.quantity * COALESCE(p.cost_price, 0)), 0) AS sold_cost
+                       COALESCE(SUM(si.quantity * COALESCE(si.unit_cost_at_sale, 0)), 0) AS sold_cost
                 FROM sales s
                 JOIN sale_items si ON si.sale_id = s.sale_id
                 LEFT JOIN products p ON p.id = CAST(si.product_id AS INTEGER)
@@ -154,7 +154,7 @@ def get_cashier_performance_report() -> list[ReportRow]:
             ), returned_items AS (
                 SELECT s.user_id,
                        COALESCE(SUM(sri.quantity), 0) AS returned_quantity,
-                       COALESCE(SUM(sri.quantity * COALESCE(p.cost_price, 0)), 0) AS returned_cost
+                       COALESCE(SUM(sri.quantity * COALESCE(si.unit_cost_at_sale, 0)), 0) AS returned_cost
                 FROM sales s
                 JOIN sale_items si ON si.sale_id = s.sale_id
                 JOIN sales_return_items sri ON sri.sale_item_id = si.id
@@ -255,7 +255,7 @@ def get_payment_method_report() -> list[ReportRow]:
 
 
 def get_inventory_valuation() -> ReportRow:
-    """Return current inventory value at catalog cost and retail prices."""
+    """Return current inventory value using each product's moving average cost."""
     with get_connection() as conn:
         row = conn.execute(
             """
@@ -275,7 +275,73 @@ def get_inventory_valuation() -> ReportRow:
         "inventory_cost": inventory_cost,
         "inventory_retail": inventory_retail,
         "potential_profit": _money(inventory_retail - inventory_cost),
+        "valuation_method": "moving_average_cost",
     }
+
+
+def get_average_cost_report(include_inactive: bool = False) -> list[ReportRow]:
+    """Return product-level stock valuation at moving average catalog cost."""
+    active_filter = "" if include_inactive else "WHERE is_active = 1"
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""SELECT id, sku, name, category_id, quantity_in_stock,
+                       COALESCE(cost_price, 0) AS average_cost,
+                       quantity_in_stock * COALESCE(cost_price, 0) AS inventory_value,
+                       is_active
+                FROM products
+                {active_filter}
+                ORDER BY name"""
+        ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "sku": row["sku"],
+            "name": row["name"],
+            "category_id": row["category_id"],
+            "quantity_in_stock": int(row["quantity_in_stock"]),
+            "average_cost": round(float(row["average_cost"] or 0), 4),
+            "inventory_value": _money(row["inventory_value"]),
+            "is_active": bool(row["is_active"]),
+        }
+        for row in rows
+    ]
+
+
+def get_current_inventory_value() -> ReportRow:
+    """Return the current moving-average inventory value and total units."""
+    valuation = get_inventory_valuation()
+    return {
+        "total_units": valuation["total_units"],
+        "current_inventory_value": valuation["inventory_cost"],
+        "valuation_method": valuation["valuation_method"],
+    }
+
+
+def get_stock_value_by_category() -> list[ReportRow]:
+    """Return current stock units and moving-average value by category."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT c.id AS category_id,
+                      c.name AS category_name,
+                      COUNT(p.id) AS product_count,
+                      COALESCE(SUM(p.quantity_in_stock), 0) AS total_units,
+                      COALESCE(SUM(p.quantity_in_stock * COALESCE(p.cost_price, 0)), 0)
+                          AS inventory_value
+               FROM categories c
+               LEFT JOIN products p ON p.category_id = c.id AND p.is_active = 1
+               GROUP BY c.id, c.name
+               ORDER BY c.name"""
+        ).fetchall()
+    return [
+        {
+            "category_id": row["category_id"],
+            "category_name": row["category_name"],
+            "product_count": int(row["product_count"]),
+            "total_units": int(row["total_units"]),
+            "inventory_value": _money(row["inventory_value"]),
+        }
+        for row in rows
+    ]
 
 
 def _build_period_report(start_date: str, end_date: str, top_limit: int) -> ReportRow:
@@ -294,7 +360,7 @@ def _build_period_report(start_date: str, end_date: str, top_limit: int) -> Repo
                 WHERE DATE(created_at, 'localtime') BETWEEN DATE(?) AND DATE(?)
             ), sold_items AS (
                 SELECT COALESCE(SUM(si.quantity), 0) AS sold_quantity,
-                       COALESCE(SUM(si.quantity * COALESCE(p.cost_price, 0)), 0) AS sold_cost
+                       COALESCE(SUM(si.quantity * COALESCE(si.unit_cost_at_sale, 0)), 0) AS sold_cost
                 FROM sale_items si
                 JOIN sales s ON s.sale_id = si.sale_id
                 LEFT JOIN products p ON p.id = CAST(si.product_id AS INTEGER)
@@ -305,7 +371,7 @@ def _build_period_report(start_date: str, end_date: str, top_limit: int) -> Repo
                 WHERE DATE(created_at, 'localtime') BETWEEN DATE(?) AND DATE(?)
             ), returned_items AS (
                 SELECT COALESCE(SUM(sri.quantity), 0) AS returned_quantity,
-                       COALESCE(SUM(sri.quantity * COALESCE(p.cost_price, 0)), 0) AS returned_cost
+                       COALESCE(SUM(sri.quantity * COALESCE(si.unit_cost_at_sale, 0)), 0) AS returned_cost
                 FROM sales_return_items sri
                 JOIN sales_returns sr ON sr.id = sri.return_id
                 JOIN sale_items si ON si.id = sri.sale_item_id
@@ -382,7 +448,7 @@ def _fetch_period_product_metrics(
                        - CASE WHEN s.subtotal > 0
                               THEN s.discount_amount * (si.quantity * si.price_at_sale / s.subtotal)
                               ELSE 0 END AS revenue_delta,
-                   si.quantity * COALESCE(p.cost_price, 0) AS cost_delta
+                   si.quantity * COALESCE(si.unit_cost_at_sale, 0) AS cost_delta
             FROM sale_items si
             JOIN sales s ON s.sale_id = si.sale_id
             JOIN products p ON p.id = CAST(si.product_id AS INTEGER)
@@ -391,7 +457,7 @@ def _fetch_period_product_metrics(
             SELECT p.id, p.sku, p.name,
                    -sri.quantity AS item_delta,
                    -sri.refund_amount AS revenue_delta,
-                   -sri.quantity * COALESCE(p.cost_price, 0) AS cost_delta
+                   -sri.quantity * COALESCE(si.unit_cost_at_sale, 0) AS cost_delta
             FROM sales_return_items sri
             JOIN sales_returns sr ON sr.id = sri.return_id
             JOIN sale_items si ON si.id = sri.sale_item_id
@@ -433,6 +499,7 @@ def _fetch_lifetime_product_metrics(conn: Any) -> list[ReportRow]:
                        - CASE WHEN s.subtotal > 0
                               THEN s.discount_amount * (si.quantity * si.price_at_sale / s.subtotal)
                               ELSE 0 END) AS sale_revenue,
+                   SUM(si.quantity * COALESCE(si.unit_cost_at_sale, 0)) AS sold_cost,
                    MAX(DATE(s.created_at, 'localtime')) AS last_sold_at
             FROM sale_items si
             JOIN sales s ON s.sale_id = si.sale_id
@@ -440,7 +507,8 @@ def _fetch_lifetime_product_metrics(conn: Any) -> list[ReportRow]:
         ), returned AS (
             SELECT CAST(si.product_id AS INTEGER) AS product_id,
                    SUM(sri.quantity) AS returned_quantity,
-                   SUM(sri.refund_amount) AS refund_amount
+                   SUM(sri.refund_amount) AS refund_amount,
+                   SUM(sri.quantity * COALESCE(si.unit_cost_at_sale, 0)) AS returned_cost
             FROM sales_return_items sri
             JOIN sale_items si ON si.id = sri.sale_item_id
             GROUP BY CAST(si.product_id AS INTEGER)
@@ -449,8 +517,8 @@ def _fetch_lifetime_product_metrics(conn: Any) -> list[ReportRow]:
                COALESCE(s.sold_quantity, 0) - COALESCE(r.returned_quantity, 0) AS items_sold,
                COALESCE(s.sale_revenue, 0) - COALESCE(r.refund_amount, 0) AS net_revenue,
                COALESCE(s.sale_revenue, 0) - COALESCE(r.refund_amount, 0)
-                   - ((COALESCE(s.sold_quantity, 0) - COALESCE(r.returned_quantity, 0))
-                      * COALESCE(p.cost_price, 0)) AS estimated_profit,
+                   - (COALESCE(s.sold_cost, 0) - COALESCE(r.returned_cost, 0))
+                   AS estimated_profit,
                s.last_sold_at
         FROM products p
         LEFT JOIN sold s ON s.product_id = p.id

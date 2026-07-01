@@ -65,6 +65,7 @@ def initialize_database():
         migrate_suppliers_table(cursor)
         migrate_products_table(cursor)
         migrate_stock_movements_table(cursor)
+        migrate_procurement_tables(cursor)
         migrate_sales_table(cursor)
         migrate_sale_items_table(cursor)
         migrate_sales_returns_table(cursor)
@@ -147,9 +148,17 @@ def migrate_suppliers_table(cursor):
             phone TEXT,
             email TEXT,
             address TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
     """)
+    columns = get_table_columns(cursor, "suppliers")
+    if "is_active" not in columns:
+        cursor.execute("ALTER TABLE suppliers ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+    if "updated_at" not in columns:
+        cursor.execute("ALTER TABLE suppliers ADD COLUMN updated_at DATETIME")
+        cursor.execute("UPDATE suppliers SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP)")
     cursor.execute("""
         INSERT OR IGNORE INTO suppliers (id, name, phone, email, address)
         VALUES (1, 'Default Supplier', NULL, NULL, NULL)
@@ -298,9 +307,94 @@ def migrate_sale_items_table(cursor):
             product_id TEXT NOT NULL,
             quantity INTEGER NOT NULL,
             price_at_sale REAL NOT NULL,
+            unit_cost_at_sale REAL NOT NULL DEFAULT 0,
             FOREIGN KEY (sale_id) REFERENCES sales (sale_id)
         );
     """)
+    columns = get_table_columns(cursor, "sale_items")
+    if "unit_cost_at_sale" not in columns:
+        cursor.execute("ALTER TABLE sale_items ADD COLUMN unit_cost_at_sale REAL NOT NULL DEFAULT 0")
+        cursor.execute("""
+            UPDATE sale_items
+            SET unit_cost_at_sale = COALESCE(
+                (SELECT cost_price FROM products WHERE products.id = CAST(sale_items.product_id AS INTEGER)),
+                0
+            )
+        """)
+
+
+def migrate_procurement_tables(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS purchase_orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            supplier_id INTEGER NOT NULL,
+            reference_number TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            status TEXT NOT NULL DEFAULT 'DRAFT'
+                CHECK (status IN ('DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'FULLY_RECEIVED', 'CANCELLED')),
+            expected_delivery_date DATE,
+            created_by INTEGER NOT NULL,
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            submitted_at DATETIME,
+            cancelled_at DATETIME,
+            FOREIGN KEY (supplier_id) REFERENCES suppliers (id),
+            FOREIGN KEY (created_by) REFERENCES users (id)
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS purchase_order_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            purchase_order_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            ordered_quantity INTEGER NOT NULL CHECK (ordered_quantity > 0),
+            received_quantity INTEGER NOT NULL DEFAULT 0
+                CHECK (received_quantity >= 0 AND received_quantity <= ordered_quantity),
+            unit_cost REAL NOT NULL CHECK (unit_cost >= 0),
+            subtotal REAL NOT NULL CHECK (subtotal >= 0),
+            FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders (id),
+            FOREIGN KEY (product_id) REFERENCES products (id),
+            UNIQUE (purchase_order_id, product_id)
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS purchase_receipts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            purchase_order_id INTEGER NOT NULL,
+            receipt_number TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            received_by INTEGER NOT NULL,
+            notes TEXT,
+            received_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders (id),
+            FOREIGN KEY (received_by) REFERENCES users (id)
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS purchase_receipt_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            receipt_id INTEGER NOT NULL,
+            purchase_order_item_id INTEGER NOT NULL,
+            quantity INTEGER NOT NULL CHECK (quantity > 0),
+            unit_cost REAL NOT NULL CHECK (unit_cost >= 0),
+            subtotal REAL NOT NULL CHECK (subtotal >= 0),
+            previous_quantity INTEGER NOT NULL,
+            new_quantity INTEGER NOT NULL,
+            previous_cost REAL NOT NULL,
+            new_cost REAL NOT NULL,
+            FOREIGN KEY (receipt_id) REFERENCES purchase_receipts (id),
+            FOREIGN KEY (purchase_order_item_id) REFERENCES purchase_order_items (id),
+            UNIQUE (receipt_id, purchase_order_item_id)
+        );
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier ON purchase_orders (supplier_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_purchase_order_items_product ON purchase_order_items (product_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_purchase_receipts_order ON purchase_receipts (purchase_order_id)"
+    )
 
 
 def migrate_sales_returns_table(cursor):

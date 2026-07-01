@@ -46,6 +46,7 @@ def calculate_totals(items, discount_type=None, discount_value=0, tax_rate=0):
                 "name": product["name"],
                 "quantity": quantity,
                 "unit_price": unit_price,
+                "unit_cost": float(product.get("cost_price") or 0),
                 "line_total": line_total,
             })
 
@@ -167,9 +168,16 @@ def create_sale(
                 notes=f"Sale {receipt_number}"
             )
             conn.execute(
-                """INSERT INTO sale_items (sale_id, product_id, quantity, price_at_sale)
-                   VALUES (?, ?, ?, ?)""",
-                (sale_id, str(item["product_id"]), item["quantity"], item["unit_price"])
+                """INSERT INTO sale_items (
+                       sale_id, product_id, quantity, price_at_sale, unit_cost_at_sale
+                   ) VALUES (?, ?, ?, ?, ?)""",
+                (
+                    sale_id,
+                    str(item["product_id"]),
+                    item["quantity"],
+                    item["unit_price"],
+                    item["unit_cost"],
+                )
             )
 
     return print_receipt_data(sale_id)
