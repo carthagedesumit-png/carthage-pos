@@ -396,6 +396,39 @@ def get_transfer(transfer_id: int) -> Optional[dict[str, Any]]:
     }
 
 
+def search_transfers(session: Any, term=None, status=None, store_id=None):
+    """Return transfer headers scoped to one authorized store."""
+    session = require_inventory_management(session)
+    store_id = int(store_id or session.store_id)
+    require_store_access(session, store_id, manage=True)
+    filters = ["(st.source_store_id = ? OR st.destination_store_id = ?)"]
+    params = [store_id, store_id]
+    if term and str(term).strip():
+        filters.append("st.reference_number LIKE ?")
+        params.append(f"%{str(term).strip()}%")
+    if status:
+        normalized = str(status).strip().upper()
+        valid = {STATUS_REQUESTED, STATUS_APPROVED, STATUS_IN_TRANSIT, STATUS_RECEIVED, STATUS_CANCELLED}
+        if normalized not in valid:
+            raise TransferError("Invalid transfer status.")
+        filters.append("st.status = ?")
+        params.append(normalized)
+    with get_connection() as conn:
+        return [
+            dict(row)
+            for row in conn.execute(
+                f"""SELECT st.*, source.code AS source_store_code,
+                           destination.code AS destination_store_code
+                    FROM stock_transfers st
+                    JOIN stores source ON source.id = st.source_store_id
+                    JOIN stores destination ON destination.id = st.destination_store_id
+                    WHERE {' AND '.join(filters)}
+                    ORDER BY st.created_at DESC, st.id DESC""",
+                params,
+            ).fetchall()
+        ]
+
+
 def _prepare_request_items(conn, line_items):
     prepared = []
     product_ids = set()

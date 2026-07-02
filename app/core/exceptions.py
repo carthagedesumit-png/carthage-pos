@@ -45,5 +45,21 @@ class DocumentError(ValidationError):
     """A document cannot be generated from the requested record."""
 
 
+class CustomerError(ValidationError):
+    """A customer or customer-group operation is invalid."""
+
+
+class LoyaltyError(CustomerError):
+    """A loyalty transaction would violate loyalty policy."""
+
+
+class WalletError(CustomerError):
+    """A wallet transaction would create invalid wallet state."""
+
+
+class CreditError(CustomerError):
+    """A credit transaction would violate account policy."""
+
+
 class ConfigurationError(ApplicationError, ValueError):
     """Application configuration is malformed."""

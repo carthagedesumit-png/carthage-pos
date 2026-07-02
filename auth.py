@@ -282,6 +282,30 @@ def get_user_by_id(user_id):
         return dict(row) if row else None
 
 
+def search_users(acting_session, term=None, include_inactive=False):
+    """Return non-sensitive user records for administrator tooling."""
+    require_user_management(acting_session)
+    filters = ["username != 'system'"]
+    params = []
+    if not include_inactive:
+        filters.append("is_active = 1")
+    if term and str(term).strip():
+        pattern = f"%{str(term).strip()}%"
+        filters.append("(username LIKE ? OR full_name LIKE ? OR role LIKE ?)")
+        params.extend([pattern, pattern, pattern])
+    with get_connection() as conn:
+        return [
+            dict(row)
+            for row in conn.execute(
+                f"""SELECT id, username, full_name, role, is_active, created_at,
+                           last_login, home_store_id
+                    FROM users WHERE {' AND '.join(filters)}
+                    ORDER BY username COLLATE NOCASE""",
+                params,
+            ).fetchall()
+        ]
+
+
 def require_user_management(session):
     session = validate_session(session)
     if not session.can_manage_users():

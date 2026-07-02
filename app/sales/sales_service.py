@@ -623,6 +623,44 @@ def get_return_data(return_id):
     return {"return": dict(sales_return), "items": items}
 
 
+def search_sales(
+    session, store_id=None, customer_id=None, date_from=None, date_to=None,
+):
+    """Return store-scoped sale headers for integration and administration clients."""
+    session = require_session(session)
+    store_id = int(store_id or session.store_id)
+    require_store_access(session, store_id)
+    filters = ["s.store_id = ?"]
+    params = [store_id]
+    if customer_id is not None:
+        filters.append("s.customer_id = ?")
+        params.append(int(customer_id))
+    if date_from:
+        filters.append("DATE(COALESCE(s.created_at, s.timestamp)) >= DATE(?)")
+        params.append(str(date_from))
+    if date_to:
+        filters.append("DATE(COALESCE(s.created_at, s.timestamp)) <= DATE(?)")
+        params.append(str(date_to))
+    with get_connection() as conn:
+        return [
+            dict(row)
+            for row in conn.execute(
+                f"""SELECT s.*, st.code AS store_code, c.customer_code,
+                           c.first_name AS customer_first_name,
+                           c.last_name AS customer_last_name,
+                           COALESCE((SELECT SUM(sr.total_refunded)
+                                     FROM sales_returns sr
+                                     WHERE sr.sale_id = s.sale_id), 0) AS refund_total
+                    FROM sales s
+                    JOIN stores st ON st.id = s.store_id
+                    LEFT JOIN customers c ON c.id = s.customer_id
+                    WHERE {' AND '.join(filters)}
+                    ORDER BY COALESCE(s.created_at, s.timestamp) DESC, s.sale_id DESC""",
+                params,
+            ).fetchall()
+        ]
+
+
 def validate_payment_method(payment_method):
     if payment_method not in PAYMENT_METHODS:
         raise SalesError("Invalid payment method.")

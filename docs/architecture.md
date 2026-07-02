@@ -11,10 +11,11 @@ consumers of persisted business records.
 Dependencies flow inward:
 
 1. `app/ui` adapts user interaction to service calls.
-2. Domain services in `app/sales`, `app/inventory`, `app/procurement`, and
+2. `app/api` adapts HTTP requests to the same service contracts.
+3. Domain services in `app/sales`, `app/inventory`, `app/procurement`, and
    `app/stores` coordinate business operations.
-3. Shared policy and infrastructure live in `app/core` and `app/database`.
-4. `app/reports` and `app/documents` query completed records without owning
+4. Shared policy and infrastructure live in `app/core` and `app/database`.
+5. `app/reports` and `app/documents` query completed records without owning
    sales, procurement, or inventory mutations.
 
 ## Module Responsibilities
@@ -24,6 +25,8 @@ Dependencies flow inward:
 - `app/core/exceptions.py`: stable application exception taxonomy.
 - `app/core/validation.py`: reusable input normalization and validation.
 - `app/core/logging_utils.py`: namespaced structured operational events.
+- `app/api`: bearer authentication, request schemas, routers, pagination, and
+  HTTP exception translation; it owns no business rules.
 - `app/database/db_manager.py`: connection creation and idempotent migrations.
 - `app/database/transactions.py`: explicit atomic write transactions.
 - `app/inventory`: catalog, branch inventory, and stock movement audit records.

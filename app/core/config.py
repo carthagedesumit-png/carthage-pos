@@ -49,6 +49,11 @@ class LoyaltySettings:
 
 
 @dataclass(frozen=True)
+class ApiSettings:
+    session_hours: int = 12
+
+
+@dataclass(frozen=True)
 class ReportSettings:
     default_limit: int = 10
     slow_moving_days: int = 30
@@ -63,6 +68,7 @@ class AppConfig:
     numbering: NumberingSettings = field(default_factory=NumberingSettings)
     reports: ReportSettings = field(default_factory=ReportSettings)
     loyalty: LoyaltySettings = field(default_factory=LoyaltySettings)
+    api: ApiSettings = field(default_factory=ApiSettings)
 
 
 def _int_setting(name: str, default: int, *, positive: bool = False) -> int:
@@ -142,6 +148,9 @@ def get_config() -> AppConfig:
             minimum_purchase=_float_setting("POS_LOYALTY_MINIMUM_PURCHASE", 0.0),
             redemption_ratio=_positive_float_setting("POS_LOYALTY_REDEMPTION_RATIO", 100.0),
             expiration_days=_int_setting("POS_LOYALTY_EXPIRATION_DAYS", 0),
+        ),
+        api=ApiSettings(
+            session_hours=_int_setting("POS_API_SESSION_HOURS", 12, positive=True),
         ),
     )
 

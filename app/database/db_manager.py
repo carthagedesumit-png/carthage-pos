@@ -62,6 +62,7 @@ def initialize_database():
         migrate_users_table(cursor)
         ensure_system_user(cursor)
         migrate_stores_and_assignments(cursor)
+        migrate_api_sessions(cursor)
         migrate_categories_table(cursor)
         migrate_suppliers_table(cursor)
         migrate_products_table(cursor)
@@ -76,6 +77,26 @@ def initialize_database():
         migrate_customer_financial_tables(cursor)
         migrate_inventory_compatibility(cursor)
     print("Carthage POS Database Initialized Successfully.")
+
+
+def migrate_api_sessions(cursor):
+    """Create revocable, store-aware API bearer sessions."""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS api_sessions (
+            token_hash TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            store_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            expires_at DATETIME NOT NULL,
+            last_used_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            revoked_at DATETIME,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (store_id) REFERENCES stores (id)
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_api_sessions_user ON api_sessions (user_id, expires_at)"
+    )
 
 
 def migrate_users_table(cursor):
