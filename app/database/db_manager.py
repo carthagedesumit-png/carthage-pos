@@ -4,7 +4,7 @@ import sqlite3
 
 DEFAULT_SYSTEM_USERNAME = "system"
 MOVEMENT_TYPES = {"PURCHASE", "SALE", "ADJUSTMENT", "RETURN"}
-PAYMENT_METHODS = {"CASH", "CARD", "TRANSFER", "MIXED"}
+PAYMENT_METHODS = {"CASH", "CARD", "TRANSFER", "WALLET", "CREDIT", "MIXED"}
 
 
 def get_database_path():
@@ -69,9 +69,11 @@ def initialize_database():
         migrate_stock_transfers(cursor)
         migrate_stock_movements_table(cursor)
         migrate_procurement_tables(cursor)
+        migrate_customer_tables(cursor)
         migrate_sales_table(cursor)
         migrate_sale_items_table(cursor)
         migrate_sales_returns_table(cursor)
+        migrate_customer_financial_tables(cursor)
         migrate_inventory_compatibility(cursor)
     print("Carthage POS Database Initialized Successfully.")
 
@@ -420,6 +422,72 @@ def migrate_stock_movements_table(cursor):
     )
 
 
+def migrate_customer_tables(cursor):
+    """Create the global customer directory and customer-group catalog."""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS customer_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            default_discount REAL NOT NULL DEFAULT 0
+                CHECK (default_discount >= 0 AND default_discount <= 100),
+            pricing_priority INTEGER NOT NULL DEFAULT 0,
+            description TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.executemany(
+        """INSERT OR IGNORE INTO customer_groups (
+               name, default_discount, pricing_priority, description
+           ) VALUES (?, ?, ?, ?)""",
+        [
+            ("Retail", 0, 0, "Standard retail customers"),
+            ("Wholesale", 0, 20, "Volume and wholesale customers"),
+            ("VIP", 0, 30, "Priority loyalty customers"),
+            ("Corporate", 0, 20, "Business and corporate accounts"),
+            ("Staff", 0, 10, "Internal staff customers"),
+        ],
+    )
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS customers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_code TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            business_name TEXT,
+            phone_number TEXT,
+            email TEXT COLLATE NOCASE,
+            address TEXT,
+            city TEXT,
+            state TEXT,
+            country TEXT,
+            date_of_birth DATE,
+            gender TEXT,
+            tax_number TEXT,
+            notes TEXT,
+            group_id INTEGER,
+            credit_limit REAL NOT NULL DEFAULT 0 CHECK (credit_limit >= 0),
+            credit_due_date DATE,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            created_by INTEGER NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY (group_id) REFERENCES customer_groups (id),
+            FOREIGN KEY (created_by) REFERENCES users (id)
+        )
+    """)
+    cursor.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_phone_unique
+           ON customers (phone_number) WHERE phone_number IS NOT NULL AND phone_number != ''"""
+    )
+    cursor.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_email_unique
+           ON customers (email COLLATE NOCASE) WHERE email IS NOT NULL AND email != ''"""
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_customers_group ON customers (group_id)")
+
+
 def migrate_sales_table(cursor):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS sales (
@@ -438,7 +506,7 @@ def migrate_sales_table(cursor):
             tax_amount REAL NOT NULL DEFAULT 0,
             total REAL NOT NULL DEFAULT 0,
             total_amount REAL NOT NULL DEFAULT 0,
-            payment_method TEXT NOT NULL DEFAULT 'CASH' CHECK (payment_method IN ('CASH', 'CARD', 'TRANSFER', 'MIXED')),
+            payment_method TEXT NOT NULL DEFAULT 'CASH' CHECK (payment_method IN ('CASH', 'CARD', 'TRANSFER', 'WALLET', 'CREDIT', 'MIXED')),
             payment_status TEXT NOT NULL DEFAULT 'PAID',
             amount_paid REAL NOT NULL DEFAULT 0,
             change_given REAL NOT NULL DEFAULT 0,
@@ -464,6 +532,14 @@ def migrate_sales_table(cursor):
         "payment_status": "TEXT NOT NULL DEFAULT 'PAID'",
         "amount_paid": "REAL NOT NULL DEFAULT 0",
         "change_given": "REAL NOT NULL DEFAULT 0",
+        "customer_id": "INTEGER REFERENCES customers(id)",
+        "customer_group_id": "INTEGER REFERENCES customer_groups(id)",
+        "loyalty_points_earned": "INTEGER NOT NULL DEFAULT 0",
+        "loyalty_points_redeemed": "INTEGER NOT NULL DEFAULT 0",
+        "loyalty_redemption_amount": "REAL NOT NULL DEFAULT 0",
+        "wallet_amount": "REAL NOT NULL DEFAULT 0",
+        "credit_amount": "REAL NOT NULL DEFAULT 0",
+        "tender_type": "TEXT NOT NULL DEFAULT 'CASH'",
     }
     for column, definition in column_defaults.items():
         if column not in columns:
@@ -500,6 +576,8 @@ def migrate_sales_table(cursor):
         )
 
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_receipt_number ON sales (receipt_number)")
+    cursor.execute("UPDATE sales SET tender_type = payment_method WHERE tender_type = 'CASH' AND payment_method != 'CASH'")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales (customer_id)")
 
 
 def migrate_sale_items_table(cursor):
@@ -635,6 +713,118 @@ def migrate_sales_returns_table(cursor):
             FOREIGN KEY (return_id) REFERENCES sales_returns (id),
             FOREIGN KEY (sale_item_id) REFERENCES sale_items (id)
         );
+    """)
+
+
+def migrate_customer_financial_tables(cursor):
+    """Create immutable loyalty, wallet, credit, and tender audit ledgers."""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sale_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sale_id INTEGER NOT NULL,
+            payment_method TEXT NOT NULL
+                CHECK (payment_method IN ('CASH', 'CARD', 'TRANSFER', 'WALLET', 'CREDIT')),
+            amount REAL NOT NULL CHECK (amount >= 0),
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (sale_id) REFERENCES sales (sale_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sale_payments_sale ON sale_payments (sale_id)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS loyalty_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL,
+            transaction_type TEXT NOT NULL
+                CHECK (transaction_type IN ('EARN', 'REDEEM', 'ADJUSTMENT', 'EXPIRATION', 'REFUND')),
+            points_delta INTEGER NOT NULL,
+            balance_after INTEGER NOT NULL CHECK (balance_after >= 0),
+            sale_id INTEGER,
+            sales_return_id INTEGER,
+            store_id INTEGER,
+            user_id INTEGER NOT NULL,
+            notes TEXT,
+            expires_at DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (customer_id) REFERENCES customers (id),
+            FOREIGN KEY (sale_id) REFERENCES sales (sale_id),
+            FOREIGN KEY (sales_return_id) REFERENCES sales_returns (id),
+            FOREIGN KEY (store_id) REFERENCES stores (id),
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS wallet_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL,
+            transaction_type TEXT NOT NULL
+                CHECK (transaction_type IN ('DEPOSIT', 'WITHDRAWAL', 'SALE', 'REFUND', 'ADJUSTMENT')),
+            amount_delta REAL NOT NULL,
+            balance_after REAL NOT NULL CHECK (balance_after >= 0),
+            sale_id INTEGER,
+            sales_return_id INTEGER,
+            store_id INTEGER,
+            user_id INTEGER NOT NULL,
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (customer_id) REFERENCES customers (id),
+            FOREIGN KEY (sale_id) REFERENCES sales (sale_id),
+            FOREIGN KEY (sales_return_id) REFERENCES sales_returns (id),
+            FOREIGN KEY (store_id) REFERENCES stores (id),
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS credit_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL,
+            transaction_type TEXT NOT NULL
+                CHECK (transaction_type IN ('CHARGE', 'PAYMENT', 'REFUND', 'ADJUSTMENT')),
+            amount_delta REAL NOT NULL,
+            balance_after REAL NOT NULL CHECK (balance_after >= 0),
+            sale_id INTEGER,
+            sales_return_id INTEGER,
+            store_id INTEGER,
+            user_id INTEGER NOT NULL,
+            due_date DATE,
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (customer_id) REFERENCES customers (id),
+            FOREIGN KEY (sale_id) REFERENCES sales (sale_id),
+            FOREIGN KEY (sales_return_id) REFERENCES sales_returns (id),
+            FOREIGN KEY (store_id) REFERENCES stores (id),
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    """)
+    for table in ("loyalty_transactions", "wallet_transactions", "credit_transactions"):
+        cursor.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{table}_customer ON {table} (customer_id, created_at)"
+        )
+        cursor.execute(f"""
+            CREATE TRIGGER IF NOT EXISTS trg_{table}_immutable_update
+            BEFORE UPDATE ON {table}
+            BEGIN
+                SELECT RAISE(ABORT, 'Financial ledger entries are immutable');
+            END
+        """)
+        cursor.execute(f"""
+            CREATE TRIGGER IF NOT EXISTS trg_{table}_immutable_delete
+            BEFORE DELETE ON {table}
+            BEGIN
+                SELECT RAISE(ABORT, 'Financial ledger entries are immutable');
+            END
+        """)
+
+    cursor.execute("""
+        INSERT INTO sale_payments (sale_id, payment_method, amount)
+        SELECT s.sale_id,
+               CASE WHEN s.payment_method IN ('CASH', 'CARD', 'TRANSFER')
+                    THEN s.payment_method ELSE 'CASH' END,
+               s.total_amount
+        FROM sales s
+        WHERE NOT EXISTS (
+            SELECT 1 FROM sale_payments sp WHERE sp.sale_id = s.sale_id
+        )
     """)
 
 

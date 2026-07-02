@@ -824,3 +824,195 @@ def _validate_limit(limit: int, allow_zero: bool = False) -> None:
 
 def _money(value: Any) -> float:
     return round(float(value or 0), 2)
+
+
+def get_top_customers(
+    limit: Optional[int] = None,
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> list[ReportRow]:
+    """Return customers ranked by refund-aware lifetime spend."""
+    limit = get_config().reports.default_limit if limit is None else limit
+    _validate_limit(limit)
+    store_ids = _resolve_report_store_ids(session, store_ids)
+    store_clause, store_params = _store_clause(store_ids, "s")
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""SELECT c.id AS customer_id, c.customer_code, c.first_name,
+                       c.last_name, c.business_name,
+                       COUNT(s.sale_id) AS transaction_count,
+                       COALESCE(SUM(s.total_amount), 0) AS gross_spend,
+                       COALESCE(SUM((SELECT SUM(sr.total_refunded)
+                                     FROM sales_returns sr
+                                     WHERE sr.sale_id = s.sale_id)), 0) AS refunds
+                FROM customers c
+                JOIN sales s ON s.customer_id = c.id
+                WHERE 1 = 1 {store_clause}
+                GROUP BY c.id
+                ORDER BY (gross_spend - refunds) DESC, transaction_count DESC,
+                         c.customer_code
+                LIMIT ?""",
+            [*store_params, limit],
+        ).fetchall()
+    return [
+        {
+            **dict(row),
+            "gross_spend": _money(row["gross_spend"]),
+            "refunds": _money(row["refunds"]),
+            "net_spend": _money(row["gross_spend"] - row["refunds"]),
+        }
+        for row in rows
+    ]
+
+
+def get_highest_spenders(
+    limit: Optional[int] = None,
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> list[ReportRow]:
+    """Compatibility-friendly explicit name for spend-ranked customers."""
+    return get_top_customers(limit=limit, store_ids=store_ids, session=session)
+
+
+def get_most_loyal_customers(
+    limit: Optional[int] = None,
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> list[ReportRow]:
+    """Return customers ranked by current loyalty balance and earned points."""
+    limit = get_config().reports.default_limit if limit is None else limit
+    _validate_limit(limit)
+    store_ids = _resolve_report_store_ids(session, store_ids)
+    store_clause, store_params = _store_clause(store_ids, "lt")
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""SELECT c.id AS customer_id, c.customer_code, c.first_name,
+                       c.last_name, c.business_name,
+                       COALESCE(SUM(lt.points_delta), 0) AS loyalty_balance,
+                       COALESCE(SUM(CASE WHEN lt.transaction_type = 'EARN'
+                                        THEN lt.points_delta ELSE 0 END), 0) AS points_earned
+                FROM customers c
+                JOIN loyalty_transactions lt ON lt.customer_id = c.id
+                WHERE 1 = 1 {store_clause}
+                GROUP BY c.id
+                ORDER BY loyalty_balance DESC, points_earned DESC, c.customer_code
+                LIMIT ?""",
+            [*store_params, limit],
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_outstanding_credit_report(
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> list[ReportRow]:
+    """Return customers with positive credit balances in the selected stores."""
+    store_ids = _resolve_report_store_ids(session, store_ids)
+    store_clause, params = _store_clause(store_ids, "ct")
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""SELECT c.id AS customer_id, c.customer_code, c.first_name,
+                       c.last_name, c.business_name, c.credit_limit,
+                       c.credit_due_date,
+                       COALESCE(SUM(ct.amount_delta), 0) AS outstanding_balance
+                FROM customers c
+                JOIN credit_transactions ct ON ct.customer_id = c.id
+                WHERE 1 = 1 {store_clause}
+                GROUP BY c.id
+                HAVING outstanding_balance > 0
+                ORDER BY outstanding_balance DESC, c.customer_code""",
+            params,
+        ).fetchall()
+    return [{**dict(row), "outstanding_balance": _money(row["outstanding_balance"])} for row in rows]
+
+
+def get_wallet_balances_report(
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> list[ReportRow]:
+    """Return positive customer wallet balances derived from the ledger."""
+    store_ids = _resolve_report_store_ids(session, store_ids)
+    store_clause, params = _store_clause(store_ids, "wt")
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""SELECT c.id AS customer_id, c.customer_code, c.first_name,
+                       c.last_name, c.business_name,
+                       COALESCE(SUM(wt.amount_delta), 0) AS wallet_balance
+                FROM customers c
+                JOIN wallet_transactions wt ON wt.customer_id = c.id
+                WHERE 1 = 1 {store_clause}
+                GROUP BY c.id
+                HAVING wallet_balance > 0
+                ORDER BY wallet_balance DESC, c.customer_code""",
+            params,
+        ).fetchall()
+    return [{**dict(row), "wallet_balance": _money(row["wallet_balance"])} for row in rows]
+
+
+def get_loyalty_liability_report(
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> ReportRow:
+    """Return outstanding points and their configured redemption liability."""
+    store_ids = _resolve_report_store_ids(session, store_ids)
+    store_clause, params = _store_clause(store_ids, "lt")
+    with get_connection() as conn:
+        points = int(conn.execute(
+            f"""SELECT COALESCE(SUM(lt.points_delta), 0)
+                FROM loyalty_transactions lt WHERE 1 = 1 {store_clause}""",
+            params,
+        ).fetchone()[0])
+    return {
+        "outstanding_points": points,
+        "redemption_ratio": get_config().loyalty.redemption_ratio,
+        "estimated_liability": _money(points / get_config().loyalty.redemption_ratio),
+    }
+
+
+def get_customer_purchase_history(
+    customer_id: int,
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> list[ReportRow]:
+    """Return one customer's store-filtered sale and refund history."""
+    store_ids = _resolve_report_store_ids(session, store_ids)
+    store_clause, params = _store_clause(store_ids, "s")
+    with get_connection() as conn:
+        if not conn.execute("SELECT 1 FROM customers WHERE id = ?", (customer_id,)).fetchone():
+            raise ValueError("Customer not found.")
+        rows = conn.execute(
+            f"""SELECT s.sale_id, s.receipt_number, s.created_at, s.store_id,
+                       st.code AS store_code, s.total_amount,
+                       COALESCE((SELECT SUM(sr.total_refunded) FROM sales_returns sr
+                                 WHERE sr.sale_id = s.sale_id), 0) AS refunds,
+                       s.loyalty_points_earned, s.loyalty_points_redeemed,
+                       s.wallet_amount, s.credit_amount, s.tender_type AS payment_method
+                FROM sales s JOIN stores st ON st.id = s.store_id
+                WHERE s.customer_id = ? {store_clause}
+                ORDER BY s.created_at DESC, s.sale_id DESC""",
+            [customer_id, *params],
+        ).fetchall()
+    return [
+        {**dict(row), "total_amount": _money(row["total_amount"]),
+         "refunds": _money(row["refunds"]),
+         "net_spend": _money(row["total_amount"] - row["refunds"])}
+        for row in rows
+    ]
+
+
+def get_customer_lifetime_value(
+    customer_id: int,
+    store_ids: Optional[list[int]] = None,
+    session: Any = None,
+) -> ReportRow:
+    """Return refund-aware lifetime value and transaction averages."""
+    history = get_customer_purchase_history(customer_id, store_ids=store_ids, session=session)
+    net_value = _money(sum(item["net_spend"] for item in history))
+    return {
+        "customer_id": customer_id,
+        "transaction_count": len(history),
+        "gross_value": _money(sum(item["total_amount"] for item in history)),
+        "refund_total": _money(sum(item["refunds"] for item in history)),
+        "lifetime_value": net_value,
+        "average_transaction_value": _money(net_value / len(history)) if history else 0.0,
+    }

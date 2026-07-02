@@ -48,7 +48,11 @@ def generate_sales_invoice(
             "document_number": document_number(
                 "invoice", sale_id, sale["store_code"]
             ),
-            "customer": _customer_fields(customer),
+            "customer": (
+                _customer_fields(customer)
+                if customer is not None
+                else document.get("customer", _customer_fields(None))
+            ),
             "footer": config.invoice_footer,
             "page_layout": "A4",
         }
@@ -422,10 +426,24 @@ def _load_sale(sale_id: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             """SELECT s.*, st.code AS store_code, st.name AS store_name,
                       st.address AS store_address, st.phone AS store_phone,
                       st.email AS store_email,
-                      u.full_name AS cashier_full_name
+                      u.full_name AS cashier_full_name,
+                      c.customer_code, c.first_name AS customer_first_name,
+                      c.last_name AS customer_last_name,
+                      c.business_name AS customer_business_name,
+                      c.address AS customer_address, c.phone_number AS customer_phone,
+                      c.email AS customer_email, c.tax_number AS customer_tax_number,
+                      cg.name AS customer_group_name,
+                      COALESCE((SELECT SUM(points_delta) FROM loyalty_transactions lt
+                                WHERE lt.customer_id = c.id), 0) AS loyalty_balance,
+                      COALESCE((SELECT SUM(amount_delta) FROM wallet_transactions wt
+                                WHERE wt.customer_id = c.id), 0) AS wallet_balance,
+                      COALESCE((SELECT SUM(amount_delta) FROM credit_transactions ct
+                                WHERE ct.customer_id = c.id), 0) AS credit_outstanding
                FROM sales s
                JOIN stores st ON st.id = s.store_id
                LEFT JOIN users u ON u.id = s.user_id
+               LEFT JOIN customers c ON c.id = s.customer_id
+               LEFT JOIN customer_groups cg ON cg.id = s.customer_group_id
                WHERE s.sale_id = ?""",
             (sale_id,),
         ).fetchone()
@@ -470,7 +488,7 @@ def _sale_document(
                 "line_total": round(float(item["subtotal"]) - line_discount + line_tax, 2),
             }
         )
-    return {
+    document = {
         "business": business,
         "store": _store_from_row(sale),
         "metadata": {
@@ -479,7 +497,7 @@ def _sale_document(
             "date_time": sale["created_at"] or sale["timestamp"],
             "cashier": sale["cashier_full_name"] or sale["username"],
             "register": sale["register_name"],
-            "payment_method": sale["payment_method"],
+            "payment_method": sale.get("tender_type") or sale["payment_method"],
             "payment_status": sale["payment_status"],
         },
         "line_items": normalized_items,
@@ -492,6 +510,28 @@ def _sale_document(
             "change_due": float(sale["change_given"] or 0),
         },
     }
+    if sale.get("customer_id") is not None:
+        customer_name = " ".join(
+            value for value in (
+                str(sale.get("customer_first_name") or "").strip(),
+                str(sale.get("customer_last_name") or "").strip(),
+            ) if value
+        )
+        document["customer"] = {
+            "name": str(sale.get("customer_business_name") or customer_name),
+            "customer_code": str(sale.get("customer_code") or ""),
+            "address": str(sale.get("customer_address") or ""),
+            "phone": str(sale.get("customer_phone") or ""),
+            "email": str(sale.get("customer_email") or ""),
+            "tax_id": str(sale.get("customer_tax_number") or ""),
+            "group": str(sale.get("customer_group_name") or ""),
+            "loyalty_balance": int(sale.get("loyalty_balance") or 0),
+            "points_earned": int(sale.get("loyalty_points_earned") or 0),
+            "points_redeemed": int(sale.get("loyalty_points_redeemed") or 0),
+            "wallet_balance": float(sale.get("wallet_balance") or 0),
+            "outstanding_credit": float(sale.get("credit_outstanding") or 0),
+        }
+    return document
 
 
 def _store_from_row(row: Mapping[str, Any]) -> dict[str, str]:

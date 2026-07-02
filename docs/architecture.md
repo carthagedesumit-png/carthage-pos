@@ -30,6 +30,7 @@ Dependencies flow inward:
 - `app/sales`: totals, payment, sale, return, and stock coordination.
 - `app/procurement`: suppliers, purchase orders, receipts, and costing.
 - `app/stores`: stores, user assignment, and inter-store transfers.
+- `app/customers`: customer profiles, groups, loyalty, wallet, and credit ledgers.
 - `app/reports`: refund-aware analytics and inventory valuation.
 - `app/documents`: side-effect-free business document assembly and rendering.
 
@@ -49,6 +50,11 @@ Exceptions raised inside a transaction trigger rollback and propagate. Domain
 validation exceptions inherit from `ValueError`, preserving legacy callers,
 while also inheriting from `ApplicationError` for newer integrations.
 
+Customer monetary and points balances are never edited directly. Loyalty,
+wallet, and credit state is derived from immutable signed ledger entries. Sales,
+returns, tender allocations, customer ledger entries, stock changes, and their
+audit records share one transaction so a failure cannot leave partial state.
+
 ## Migration Strategy
 
 Schema changes are idempotent functions in `app/database/db_manager.py` and run
@@ -63,6 +69,10 @@ Read settings through `get_config()` rather than accessing environment variables
 inside domain services. Configuration is immutable and cached. Tests or process
 bootstrap code that changes environment values must call `reset_config_cache()`.
 Defaults preserve prior behavior when no variables are configured.
+
+Loyalty policy uses `POS_LOYALTY_POINTS_PER_CURRENCY`,
+`POS_LOYALTY_MINIMUM_PURCHASE`, `POS_LOYALTY_REDEMPTION_RATIO`, and
+`POS_LOYALTY_EXPIRATION_DAYS`. Customer codes use `POS_CUSTOMER_PREFIX`.
 
 ## Logging
 

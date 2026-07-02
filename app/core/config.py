@@ -37,6 +37,15 @@ class NumberingSettings:
     credit_note_prefix: str = "CN"
     purchase_order_prefix: str = "PO"
     transfer_prefix: str = "TRN"
+    customer_prefix: str = "CUS"
+
+
+@dataclass(frozen=True)
+class LoyaltySettings:
+    points_per_currency: float = 1.0
+    minimum_purchase: float = 0.0
+    redemption_ratio: float = 100.0
+    expiration_days: int = 0
 
 
 @dataclass(frozen=True)
@@ -53,6 +62,7 @@ class AppConfig:
     inventory: InventorySettings = field(default_factory=InventorySettings)
     numbering: NumberingSettings = field(default_factory=NumberingSettings)
     reports: ReportSettings = field(default_factory=ReportSettings)
+    loyalty: LoyaltySettings = field(default_factory=LoyaltySettings)
 
 
 def _int_setting(name: str, default: int, *, positive: bool = False) -> int:
@@ -73,6 +83,13 @@ def _float_setting(name: str, default: float) -> float:
         raise ConfigurationError(f"{name} must be a number.") from exc
     if value < 0:
         raise ConfigurationError(f"{name} must be non-negative.")
+    return value
+
+
+def _positive_float_setting(name: str, default: float) -> float:
+    value = _float_setting(name, default)
+    if value == 0:
+        raise ConfigurationError(f"{name} must be positive.")
     return value
 
 
@@ -114,10 +131,17 @@ def get_config() -> AppConfig:
             credit_note_prefix=_prefix("POS_CREDIT_NOTE_PREFIX", "CN"),
             purchase_order_prefix=_prefix("POS_PURCHASE_ORDER_PREFIX", "PO"),
             transfer_prefix=_prefix("POS_TRANSFER_PREFIX", "TRN"),
+            customer_prefix=_prefix("POS_CUSTOMER_PREFIX", "CUS"),
         ),
         reports=ReportSettings(
             default_limit=_int_setting("POS_REPORT_DEFAULT_LIMIT", 10, positive=True),
             slow_moving_days=_int_setting("POS_SLOW_MOVING_DAYS", 30, positive=True),
+        ),
+        loyalty=LoyaltySettings(
+            points_per_currency=_float_setting("POS_LOYALTY_POINTS_PER_CURRENCY", 1.0),
+            minimum_purchase=_float_setting("POS_LOYALTY_MINIMUM_PURCHASE", 0.0),
+            redemption_ratio=_positive_float_setting("POS_LOYALTY_REDEMPTION_RATIO", 100.0),
+            expiration_days=_int_setting("POS_LOYALTY_EXPIRATION_DAYS", 0),
         ),
     )
 
