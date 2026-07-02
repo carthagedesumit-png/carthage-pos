@@ -27,6 +27,8 @@ Dependencies flow inward:
 - `app/core/logging_utils.py`: namespaced structured operational events.
 - `app/api`: bearer authentication, request schemas, routers, pagination, and
   HTTP exception translation; it owns no business rules.
+- `app/hardware`: peripheral contracts, adapters, composition, authorization,
+  fallback behavior, and non-sensitive hardware auditing.
 - `app/database/db_manager.py`: connection creation and idempotent migrations.
 - `app/database/transactions.py`: explicit atomic write transactions.
 - `app/inventory`: catalog, branch inventory, and stock movement audit records.

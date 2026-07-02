@@ -301,3 +301,12 @@ class LoyaltyAdjustmentRequest(ApiModel):
 class CreditTermsRequest(ApiModel):
     credit_limit: float = Field(ge=0)
     due_date: Optional[date] = None
+
+
+class ScannerLookupRequest(ApiModel):
+    value: str = Field(min_length=1, max_length=128)
+    store_id: Optional[int] = Field(default=None, gt=0)
+
+
+class DisplayMessageRequest(ApiModel):
+    message: str = Field(min_length=1, max_length=200)

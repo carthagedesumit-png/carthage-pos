@@ -85,6 +85,7 @@ reports accept repeated filters such as `?store_id=1&store_id=2`.
 - `customers`, `loyalty`, `wallet`, `credit`: CRM and financial ledgers.
 - `reports`: sales, inventory, branch, cashier, customer, wallet, credit, loyalty.
 - `documents`: receipt, invoice, credit note, PO, GRN, and transfer output.
+- `hardware`: status, printer diagnostics/jobs, cash drawer, scanner, and display.
 
 Document endpoints support `format=json`, `format=text`, and `format=html`.
 Thermal receipts and credit notes support `width_mm=58` or `width_mm=80`.

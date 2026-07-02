@@ -54,6 +54,18 @@ class ApiSettings:
 
 
 @dataclass(frozen=True)
+class HardwareSettings:
+    printer_enabled: bool = False
+    printer_profile: str = "80mm"
+    printer_name: str = ""
+    printer_path: str = ""
+    cash_drawer_enabled: bool = False
+    open_drawer_after_cash_sale: bool = False
+    scanner_enabled: bool = True
+    customer_display_enabled: bool = False
+
+
+@dataclass(frozen=True)
 class ReportSettings:
     default_limit: int = 10
     slow_moving_days: int = 30
@@ -69,6 +81,7 @@ class AppConfig:
     reports: ReportSettings = field(default_factory=ReportSettings)
     loyalty: LoyaltySettings = field(default_factory=LoyaltySettings)
     api: ApiSettings = field(default_factory=ApiSettings)
+    hardware: HardwareSettings = field(default_factory=HardwareSettings)
 
 
 def _int_setting(name: str, default: int, *, positive: bool = False) -> int:
@@ -104,6 +117,18 @@ def _prefix(name: str, default: str) -> str:
     if not value or not value.replace("-", "").isalnum():
         raise ConfigurationError(f"{name} must contain letters, numbers, or hyphens.")
     return value
+
+
+def _bool_setting(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigurationError(f"{name} must be a boolean value.")
 
 
 @lru_cache(maxsize=1)
@@ -151,6 +176,16 @@ def get_config() -> AppConfig:
         ),
         api=ApiSettings(
             session_hours=_int_setting("POS_API_SESSION_HOURS", 12, positive=True),
+        ),
+        hardware=HardwareSettings(
+            printer_enabled=_bool_setting("POS_PRINTER_ENABLED", False),
+            printer_profile=os.environ.get("POS_PRINTER_PROFILE", "80mm").strip().lower(),
+            printer_name=os.environ.get("POS_RECEIPT_PRINTER_NAME", "").strip(),
+            printer_path=os.environ.get("POS_RECEIPT_PRINTER_PATH", "").strip(),
+            cash_drawer_enabled=_bool_setting("POS_CASH_DRAWER_ENABLED", False),
+            open_drawer_after_cash_sale=_bool_setting("POS_OPEN_DRAWER_AFTER_CASH_SALE", False),
+            scanner_enabled=_bool_setting("POS_SCANNER_ENABLED", True),
+            customer_display_enabled=_bool_setting("POS_CUSTOMER_DISPLAY_ENABLED", False),
         ),
     )
 

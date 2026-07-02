@@ -14,6 +14,7 @@ Enterprise-grade supermarket POS terminal engine for inventory management and sa
 - Stock validation before cart add and checkout commit
 - Unit tests backed by isolated temporary databases
 - Versioned FastAPI integration layer with OpenAPI documentation
+- Adapter-based receipt printer, cash drawer, scanner, and customer display support
 
 ## First-run setup
 
@@ -51,3 +52,6 @@ python -m uvicorn app.api.app:app --host 127.0.0.1 --port 8000
 Open `http://127.0.0.1:8000/docs` for the interactive API reference. See
 [`docs/api.md`](docs/api.md) for authentication, endpoint groups, examples, and
 the error contract.
+
+Hardware configuration and mock-device testing are documented in
+[`docs/hardware.md`](docs/hardware.md).

@@ -63,6 +63,7 @@ def initialize_database():
         ensure_system_user(cursor)
         migrate_stores_and_assignments(cursor)
         migrate_api_sessions(cursor)
+        migrate_hardware_events(cursor)
         migrate_categories_table(cursor)
         migrate_suppliers_table(cursor)
         migrate_products_table(cursor)
@@ -96,6 +97,28 @@ def migrate_api_sessions(cursor):
     """)
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_api_sessions_user ON api_sessions (user_id, expires_at)"
+    )
+
+
+def migrate_hardware_events(cursor):
+    """Create a non-sensitive operational audit trail for peripheral actions."""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS hardware_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            device_type TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            success INTEGER NOT NULL,
+            user_id INTEGER,
+            store_id INTEGER,
+            details TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (store_id) REFERENCES stores (id)
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_hardware_events_created ON hardware_events (created_at, device_type)"
     )
 
 

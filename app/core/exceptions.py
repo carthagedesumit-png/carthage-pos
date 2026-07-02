@@ -61,5 +61,21 @@ class CreditError(CustomerError):
     """A credit transaction would violate account policy."""
 
 
+class HardwareError(ValidationError):
+    """A hardware request is invalid or could not be completed."""
+
+
+class HardwareUnavailableError(HardwareError):
+    """A configured peripheral is disabled or unavailable."""
+
+
+class PrinterError(HardwareError):
+    """A receipt printer operation failed."""
+
+
+class ScannerError(HardwareError):
+    """A scanner input or lookup is invalid."""
+
+
 class ConfigurationError(ApplicationError, ValueError):
     """Application configuration is malformed."""
