@@ -18,6 +18,7 @@ Enterprise-grade supermarket POS terminal engine for inventory management and sa
 - Multi-format product identifiers, reusable labels, previews, and audited label printing
 - Verified database backups, rollback-safe restore, retention, scheduling, and portable exports
 - Windows setup, upgrade, repair, deployment verification, and offline update staging
+- Offline-first signed licensing, activation, product editions, and feature policy
 
 ## First-run setup
 
@@ -64,6 +65,8 @@ Backup operations and the disaster recovery checklist are documented in
 [`docs/backup.md`](docs/backup.md).
 Windows installation, upgrade, repair, uninstall, and release-build instructions
 are documented in [`docs/installation.md`](docs/installation.md).
+Commercial licensing, offline activation, edition capabilities, and secure key
+deployment are documented in [`docs/licensing.md`](docs/licensing.md).
 
 ## Build the Windows installer
 

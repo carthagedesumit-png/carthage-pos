@@ -380,3 +380,13 @@ class BackupSchedulerRequest(ApiModel):
 class DataImportRequest(ApiModel):
     format: Literal["JSON", "CSV"] = "JSON"
     content: str = Field(min_length=1)
+
+
+class ActivationExportRequest(ApiModel):
+    license_key: str = Field(min_length=1, max_length=64)
+    customer_name: str = Field(min_length=1, max_length=200)
+    company_name: str = Field(min_length=1, max_length=200)
+
+
+class LicenseImportRequest(ApiModel):
+    document: dict[str, Any]

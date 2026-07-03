@@ -242,6 +242,7 @@ def _prepare_directories(request):
 def _prepare_runtime_directories(install_dir, database_path, backup_path):
     for path in (install_dir, install_dir / "config", install_dir / "logs",
                  install_dir / "updates", install_dir / "rollback",
+                 install_dir / "licenses", install_dir / "licenses" / "activation",
                  database_path.parent, backup_path):
         path.mkdir(parents=True, exist_ok=True)
 

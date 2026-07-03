@@ -44,6 +44,10 @@ Dependencies flow inward:
   retention, scheduling policy, and portable data transfer.
 - `app/deployment`: setup validation, configuration generation, installation
   lifecycle, deployment health, Windows integration metadata, and update staging.
+- `app/licensing`: RSA signature verification, privacy-preserving machine
+  fingerprints, offline activation, trial/grace lifecycle, edition policy, and
+  centrally enforced feature/resource limits. Issuer private keys never enter
+  runtime application modules or production packages.
 
 ## Service Interactions
 
@@ -80,6 +84,9 @@ sidecar metadata remain outside the transactional business database.
 Installer lifecycle operations use staging databases and SQLite snapshots.
 PyInstaller packages the Python entry points; Inno Setup owns Windows shortcuts,
 Programs and Features registration, file deployment, and executable uninstall.
+Licensing is code-only and stores signed activation documents outside SQLite, so
+it introduces no database migration. Runtime license replacement uses atomic file
+operations and archives the previous signed document.
 
 ## Configuration
 
@@ -87,6 +94,9 @@ Read settings through `get_config()` rather than accessing environment variables
 inside domain services. Configuration is immutable and cached. Tests or process
 bootstrap code that changes environment values must call `reset_config_cache()`.
 Defaults preserve prior behavior when no variables are configured.
+Source/development runs leave license enforcement disabled for backward
+compatibility. Installer-generated configuration enables it, starts a
+Professional-feature evaluation, and falls back to Community after expiration.
 
 Loyalty policy uses `POS_LOYALTY_POINTS_PER_CURRENCY`,
 `POS_LOYALTY_MINIMUM_PURCHASE`, `POS_LOYALTY_REDEMPTION_RATIO`, and

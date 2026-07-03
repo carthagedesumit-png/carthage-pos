@@ -54,6 +54,8 @@ class DeploymentPlatformTestCase(unittest.TestCase):
         config = Path(state["configuration_file"]).read_text(encoding="utf-8")
         self.assertIn('POS_BUSINESS_NAME="Deployment Test Store"', config)
         self.assertIn('POS_CURRENCY="USD"', config)
+        self.assertIn('POS_LICENSE_ENFORCEMENT="true"', config)
+        self.assertTrue((self.install_dir / "licenses" / "activation").is_dir())
         self.assertNotIn("StrongAdmin123", config)
         self.assertNotIn("StrongAdmin123", json.dumps(state))
         self.assertTrue(Path(state["windows_integration_file"]).is_file())
@@ -99,6 +101,8 @@ class DeploymentPlatformTestCase(unittest.TestCase):
         self.assertEqual(parsed["CARTHAGE_POS_DB"], str(self.database_path.resolve()))
         self.assertEqual(parsed["POS_PRINTER_PROFILE"], "80mm")
         self.assertEqual(parsed["POS_DEFAULT_TAX_RATE"], "0.075")
+        self.assertEqual(parsed["POS_LICENSE_DEFAULT_EDITION"], "COMMUNITY")
+        self.assertEqual(parsed["POS_LICENSE_TRIAL_EDITION"], "PROFESSIONAL")
         self.assertNotIn("CARTHAGE_POS_ADMIN_PASSWORD", parsed)
 
     def test_upgrade_and_repair_regenerate_missing_configuration(self):

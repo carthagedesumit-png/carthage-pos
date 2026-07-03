@@ -6,8 +6,12 @@ from time import perf_counter
 from fastapi import FastAPI, Request
 
 from app.api.errors import install_exception_handlers
+from app.api.licensing_middleware import enforce_api_license
 from app.api.schemas import ErrorResponse
-from app.api.routers import backups, barcodes, core, customers, deployment, documents, hardware, operations, reports
+from app.api.routers import (
+    backups, barcodes, core, customers, deployment, documents, hardware,
+    licensing, operations, reports,
+)
 from app.core.logging_utils import get_logger, log_event
 from app.core.version import APP_VERSION
 from app.database.db_manager import initialize_database
@@ -50,6 +54,8 @@ def create_app(*, initialize: bool = True) -> FastAPI:
     application.include_router(barcodes.router, prefix="/api/v1")
     application.include_router(backups.router, prefix="/api/v1")
     application.include_router(deployment.router, prefix="/api/v1")
+    application.include_router(licensing.router, prefix="/api/v1")
+    application.middleware("http")(enforce_api_license)
 
     @application.middleware("http")
     async def request_logging(request: Request, call_next):

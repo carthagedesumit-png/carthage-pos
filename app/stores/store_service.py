@@ -34,6 +34,15 @@ def create_store(
     code = _required(code, "Store code").upper()
     name = _required(name, "Store name")
     with transaction() as conn:
+        from app.licensing.editions import MULTI_STORE
+        from app.licensing.feature_service import (
+            enforce_resource_limit, require_feature, require_write_access,
+        )
+        require_write_access()
+        store_count = conn.execute("SELECT COUNT(*) FROM stores WHERE is_active = 1").fetchone()[0]
+        if store_count >= 1:
+            require_feature(MULTI_STORE)
+        enforce_resource_limit("stores", store_count)
         _validate_manager(conn, manager_user_id)
         try:
             cursor = conn.execute(

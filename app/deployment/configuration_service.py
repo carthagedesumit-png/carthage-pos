@@ -40,6 +40,17 @@ def build_environment(request: SetupRequest) -> dict[str, str]:
         "POS_UPDATE_CHANNEL": "stable",
         "POS_UPDATE_MANIFEST": str(install_dir / "updates" / "manifest.json"),
         "POS_AUTO_UPDATE_CHECK": "false",
+        "POS_LICENSE_DIRECTORY": str(install_dir / "licenses"),
+        "POS_LICENSE_FILE": str(install_dir / "licenses" / "license.json"),
+        "POS_ACTIVATION_DIRECTORY": str(install_dir / "licenses" / "activation"),
+        "POS_LICENSE_PUBLIC_KEY_FILE": str(install_dir / "config" / "license-public-key.json"),
+        "POS_LICENSE_GRACE_PERIOD_DAYS": "7",
+        "POS_LICENSE_EVALUATION_DAYS": "30",
+        "POS_LICENSE_DEFAULT_EDITION": "COMMUNITY",
+        "POS_LICENSE_TRIAL_EDITION": "PROFESSIONAL",
+        "POS_LICENSE_DEVELOPER_MODE": "false",
+        "POS_LICENSE_ENFORCEMENT": "true",
+        "POS_LICENSE_FINGERPRINT_MIN_MATCHES": "1",
     }
 
 

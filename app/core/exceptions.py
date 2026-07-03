@@ -105,5 +105,21 @@ class UpdateError(DeploymentError):
     """An update manifest or staged package is invalid."""
 
 
+class LicenseError(ValidationError):
+    """A license, edition, or activation operation failed."""
+
+
+class LicenseValidationError(LicenseError):
+    """A license document failed signature, binding, or lifecycle validation."""
+
+
+class LicenseFeatureError(AuthorizationError):
+    """The active product edition does not permit a requested feature."""
+
+
+class ActivationError(LicenseError):
+    """Offline or future online activation could not be completed."""
+
+
 class ConfigurationError(ApplicationError, ValueError):
     """Application configuration is malformed."""

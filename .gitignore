@@ -228,6 +228,7 @@ backups/
 logs/
 updates/
 rollback/
+licenses/
 config/carthage-pos.env
 config/deployment.json
 config/windows-integration.json

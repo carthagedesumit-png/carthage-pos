@@ -113,6 +113,21 @@ class UpdateSettings:
 
 
 @dataclass(frozen=True)
+class LicenseSettings:
+    directory: str = ""
+    license_file: str = ""
+    activation_directory: str = ""
+    public_key_file: str = ""
+    grace_period_days: int = 7
+    evaluation_days: int = 30
+    default_edition: str = "COMMUNITY"
+    trial_edition: str = "PROFESSIONAL"
+    developer_mode: bool = False
+    enforcement_enabled: bool = False
+    fingerprint_min_matches: int = 1
+
+
+@dataclass(frozen=True)
 class ReportSettings:
     default_limit: int = 10
     slow_moving_days: int = 30
@@ -133,6 +148,7 @@ class AppConfig:
     backup: BackupSettings = field(default_factory=BackupSettings)
     deployment: DeploymentSettings = field(default_factory=DeploymentSettings)
     updates: UpdateSettings = field(default_factory=UpdateSettings)
+    licensing: LicenseSettings = field(default_factory=LicenseSettings)
 
 
 def _int_setting(name: str, default: int, *, positive: bool = False) -> int:
@@ -263,6 +279,16 @@ def get_config() -> AppConfig:
     update_channel = os.environ.get("POS_UPDATE_CHANNEL", "stable").strip().lower()
     if update_channel not in {"stable", "beta", "development"}:
         raise ConfigurationError("POS_UPDATE_CHANNEL must be stable, beta, or development.")
+    default_edition = os.environ.get("POS_LICENSE_DEFAULT_EDITION", "COMMUNITY").strip().upper()
+    trial_edition = os.environ.get("POS_LICENSE_TRIAL_EDITION", "PROFESSIONAL").strip().upper()
+    valid_editions = {"COMMUNITY", "PROFESSIONAL", "ENTERPRISE", "DEVELOPER"}
+    if default_edition not in valid_editions or trial_edition not in valid_editions:
+        raise ConfigurationError("License editions must be COMMUNITY, PROFESSIONAL, ENTERPRISE, or DEVELOPER.")
+    default_license_directory = os.path.join(installation_directory, "licenses")
+    license_directory = os.path.abspath(os.path.expanduser(
+        os.environ.get("POS_LICENSE_DIRECTORY", default_license_directory).strip()
+        or default_license_directory
+    ))
     api_port = _int_setting("POS_API_PORT", 8000, positive=True)
     if api_port > 65535:
         raise ConfigurationError("POS_API_PORT must be between 1 and 65535.")
@@ -368,6 +394,32 @@ def get_config() -> AppConfig:
                 ).strip() or os.path.join(installation_directory, "updates", "manifest.json")
             )),
             auto_check=_bool_setting("POS_AUTO_UPDATE_CHECK", False),
+        ),
+        licensing=LicenseSettings(
+            directory=license_directory,
+            license_file=os.path.abspath(os.path.expanduser(
+                os.environ.get(
+                    "POS_LICENSE_FILE", os.path.join(license_directory, "license.json")
+                ).strip() or os.path.join(license_directory, "license.json")
+            )),
+            activation_directory=os.path.abspath(os.path.expanduser(
+                os.environ.get(
+                    "POS_ACTIVATION_DIRECTORY", os.path.join(license_directory, "activation")
+                ).strip() or os.path.join(license_directory, "activation")
+            )),
+            public_key_file=os.path.abspath(os.path.expanduser(
+                os.environ.get(
+                    "POS_LICENSE_PUBLIC_KEY_FILE",
+                    os.path.join(installation_directory, "config", "license-public-key.json"),
+                ).strip() or os.path.join(installation_directory, "config", "license-public-key.json")
+            )),
+            grace_period_days=_int_setting("POS_LICENSE_GRACE_PERIOD_DAYS", 7),
+            evaluation_days=_int_setting("POS_LICENSE_EVALUATION_DAYS", 30, positive=True),
+            default_edition=default_edition,
+            trial_edition=trial_edition,
+            developer_mode=_bool_setting("POS_LICENSE_DEVELOPER_MODE", False),
+            enforcement_enabled=_bool_setting("POS_LICENSE_ENFORCEMENT", False),
+            fingerprint_min_matches=_int_setting("POS_LICENSE_FINGERPRINT_MIN_MATCHES", 1, positive=True),
         ),
     )
 

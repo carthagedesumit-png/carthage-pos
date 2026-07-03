@@ -26,6 +26,8 @@ def verify_installation(installation_directory: str) -> dict:
         required_keys = {
             "CARTHAGE_POS_DB", "POS_BACKUP_DIRECTORY", "POS_LOG_DIRECTORY",
             "POS_PRINTER_ENABLED", "POS_PRINTER_PROFILE",
+            "POS_LICENSE_DIRECTORY", "POS_ACTIVATION_DIRECTORY",
+            "POS_LICENSE_PUBLIC_KEY_FILE", "POS_LICENSE_ENFORCEMENT",
         }
         missing = required_keys - environment.keys()
         if missing:
@@ -42,9 +44,19 @@ def verify_installation(installation_directory: str) -> dict:
         "backup_directory": Path(environment["POS_BACKUP_DIRECTORY"]),
         "log_directory": Path(environment["POS_LOG_DIRECTORY"]),
         "update_directory": install_dir / "updates",
+        "license_directory": Path(environment["POS_LICENSE_DIRECTORY"]),
+        "activation_directory": Path(environment["POS_ACTIVATION_DIRECTORY"]),
     }
     for name, path in required.items():
         checks.append(_directory_check(name, path))
+
+    public_key = Path(environment["POS_LICENSE_PUBLIC_KEY_FILE"])
+    checks.append(_check(
+        "license_public_key", True,
+        "License public key is available." if public_key.is_file()
+        else "License public key is not provisioned; trial mode remains available.",
+        warning=not public_key.is_file(),
+    ))
 
     database_path = Path(environment["CARTHAGE_POS_DB"])
     checks.extend(_database_checks(database_path))

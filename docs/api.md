@@ -92,6 +92,8 @@ reports accept repeated filters such as `?store_id=1&store_id=2`.
   restore, deletion, scheduling policy, and portable exports/imports.
 - `deployment`: version inventory, deployment health, installer metadata,
   update status, verification, and compatibility checks.
+- `licensing`: safe license status, edition/features, offline request export,
+  signed activation import, replacement, and deactivation.
 
 ```http
 GET /api/v1/version
@@ -106,6 +108,25 @@ Authorization: Bearer <admin-token>
 Deployment paths and installation verification are restricted to administrators;
 managers may inspect deployment and update status. No endpoint installs or
 executes an update package.
+
+License inspection is available to authenticated users; full license management
+is administrator-only. Status payloads mask human-readable keys and never expose
+signatures or machine identifiers. Operational API routes are edition-gated when
+`POS_LICENSE_ENFORCEMENT=true`; licensing and authentication routes remain
+available so an expired or restricted installation can be recovered.
+
+```http
+GET /api/v1/licensing/status
+Authorization: Bearer <token>
+```
+
+```http
+POST /api/v1/licensing/export-request
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{"license_key":"CTG-PRO-...","customer_name":"Ada Owner","company_name":"Example Retail Ltd"}
+```
 
 Create and verify a named backup:
 

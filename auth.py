@@ -201,6 +201,12 @@ def _insert_user(username, password, full_name, role, home_store_id=None):
         with transaction() as conn:
             home_store_id = home_store_id or _default_store_id(conn)
             _require_active_store(conn, home_store_id)
+            from app.licensing.feature_service import enforce_resource_limit, require_write_access
+            require_write_access()
+            user_count = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE username != 'system' AND is_active = 1"
+            ).fetchone()[0]
+            enforce_resource_limit("users", user_count)
             cursor = conn.execute(
                 """INSERT INTO users (
                        username, password_hash, full_name, role, is_active, home_store_id
