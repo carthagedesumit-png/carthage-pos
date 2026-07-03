@@ -17,6 +17,7 @@ Enterprise-grade supermarket POS terminal engine for inventory management and sa
 - Adapter-based receipt printer, cash drawer, scanner, and customer display support
 - Multi-format product identifiers, reusable labels, previews, and audited label printing
 - Verified database backups, rollback-safe restore, retention, scheduling, and portable exports
+- Windows setup, upgrade, repair, deployment verification, and offline update staging
 
 ## First-run setup
 
@@ -61,3 +62,17 @@ Barcode formats, label templates, configuration, and printing workflows are in
 [`docs/barcodes.md`](docs/barcodes.md).
 Backup operations and the disaster recovery checklist are documented in
 [`docs/backup.md`](docs/backup.md).
+Windows installation, upgrade, repair, uninstall, and release-build instructions
+are documented in [`docs/installation.md`](docs/installation.md).
+
+## Build the Windows installer
+
+Install `requirements-build.txt` and Inno Setup 6, then run:
+
+```powershell
+python -m pip install -r requirements-build.txt
+.\installer\build.ps1
+```
+
+The build produces packaged application/deployment executables and an Inno
+Setup installer. Release signing is performed outside this repository.

@@ -225,6 +225,12 @@ __marimo__/
 *.sqlite
 *.sqlite3
 backups/
+logs/
+updates/
+rollback/
+config/carthage-pos.env
+config/deployment.json
+config/windows-integration.json
 .vs/
 .idea/
 .vscode/

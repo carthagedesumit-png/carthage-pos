@@ -1,6 +1,9 @@
 """Central immutable application configuration loaded from the environment."""
 
 import os
+import json
+import re
+from pathlib import Path
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -51,6 +54,8 @@ class LoyaltySettings:
 @dataclass(frozen=True)
 class ApiSettings:
     session_hours: int = 12
+    host: str = "127.0.0.1"
+    port: int = 8000
 
 
 @dataclass(frozen=True)
@@ -90,6 +95,24 @@ class BackupSettings:
 
 
 @dataclass(frozen=True)
+class DeploymentSettings:
+    installation_directory: str = ""
+    state_file: str = ""
+    currency: str = "USD"
+    timezone: str = "UTC"
+    log_level: str = "INFO"
+    log_directory: str = ""
+    seed_sample_data: bool = True
+
+
+@dataclass(frozen=True)
+class UpdateSettings:
+    channel: str = "stable"
+    manifest_path: str = ""
+    auto_check: bool = False
+
+
+@dataclass(frozen=True)
 class ReportSettings:
     default_limit: int = 10
     slow_moving_days: int = 30
@@ -108,6 +131,8 @@ class AppConfig:
     hardware: HardwareSettings = field(default_factory=HardwareSettings)
     barcodes: BarcodeSettings = field(default_factory=BarcodeSettings)
     backup: BackupSettings = field(default_factory=BackupSettings)
+    deployment: DeploymentSettings = field(default_factory=DeploymentSettings)
+    updates: UpdateSettings = field(default_factory=UpdateSettings)
 
 
 def _int_setting(name: str, default: int, *, positive: bool = False) -> int:
@@ -157,6 +182,47 @@ def _bool_setting(name: str, default: bool) -> bool:
     raise ConfigurationError(f"{name} must be a boolean value.")
 
 
+def parse_environment_file(path: str) -> dict[str, str]:
+    """Parse a generated deployment environment file without changing process state."""
+    loaded = {}
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise ConfigurationError("Environment file is unavailable.") from exc
+    for line_number, raw_line in enumerate(lines, start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            raise ConfigurationError(f"Invalid environment entry on line {line_number}.")
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", key):
+            raise ConfigurationError(f"Invalid environment key on line {line_number}.")
+        raw_value = raw_value.strip()
+        if raw_value.startswith('"'):
+            try:
+                value = json.loads(raw_value)
+            except json.JSONDecodeError as exc:
+                raise ConfigurationError(f"Invalid environment value on line {line_number}.") from exc
+        else:
+            value = raw_value
+        if not isinstance(value, str):
+            value = str(value)
+        loaded[key] = value
+    return loaded
+
+
+def load_environment_file(path: str, *, override: bool = False) -> dict[str, str]:
+    """Load a generated deployment environment file without external dependencies."""
+    loaded = parse_environment_file(path)
+    for key, value in loaded.items():
+        if override or key not in os.environ:
+            os.environ[key] = value
+    reset_config_cache()
+    return loaded
+
+
 @lru_cache(maxsize=1)
 def get_config() -> AppConfig:
     """Return validated process configuration; cache may be cleared in tests."""
@@ -178,6 +244,28 @@ def get_config() -> AppConfig:
     default_backup_directory = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..", "backups")
     )
+    default_installation_directory = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..")
+    )
+    installation_directory = os.path.abspath(os.path.expanduser(
+        os.environ.get("POS_INSTALLATION_DIRECTORY", default_installation_directory).strip()
+        or default_installation_directory
+    ))
+    currency = os.environ.get("POS_CURRENCY", "USD").strip().upper()
+    if not re.fullmatch(r"[A-Z]{3}", currency):
+        raise ConfigurationError("POS_CURRENCY must be a three-letter currency code.")
+    timezone = os.environ.get("POS_TIMEZONE", "UTC").strip()
+    if not timezone:
+        raise ConfigurationError("POS_TIMEZONE is required.")
+    log_level = os.environ.get("POS_LOG_LEVEL", "INFO").strip().upper()
+    if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        raise ConfigurationError("POS_LOG_LEVEL is invalid.")
+    update_channel = os.environ.get("POS_UPDATE_CHANNEL", "stable").strip().lower()
+    if update_channel not in {"stable", "beta", "development"}:
+        raise ConfigurationError("POS_UPDATE_CHANNEL must be stable, beta, or development.")
+    api_port = _int_setting("POS_API_PORT", 8000, positive=True)
+    if api_port > 65535:
+        raise ConfigurationError("POS_API_PORT must be between 1 and 65535.")
     return AppConfig(
         tax_rate=_float_setting("POS_DEFAULT_TAX_RATE", 0.0),
         company=CompanySettings(
@@ -217,6 +305,8 @@ def get_config() -> AppConfig:
         ),
         api=ApiSettings(
             session_hours=_int_setting("POS_API_SESSION_HOURS", 12, positive=True),
+            host=os.environ.get("POS_API_HOST", "127.0.0.1").strip() or "127.0.0.1",
+            port=api_port,
         ),
         hardware=HardwareSettings(
             printer_enabled=_bool_setting("POS_PRINTER_ENABLED", False),
@@ -250,6 +340,34 @@ def get_config() -> AppConfig:
             auto_before_restore=_bool_setting("POS_BACKUP_AUTO_BEFORE_RESTORE", True),
             verify_after_create=_bool_setting("POS_BACKUP_VERIFY_AFTER_CREATE", True),
             schedule=backup_schedule,
+        ),
+        deployment=DeploymentSettings(
+            installation_directory=installation_directory,
+            state_file=os.path.abspath(os.path.expanduser(
+                os.environ.get(
+                    "POS_DEPLOYMENT_STATE_FILE",
+                    os.path.join(installation_directory, "config", "deployment.json"),
+                ).strip() or os.path.join(installation_directory, "config", "deployment.json")
+            )),
+            currency=currency,
+            timezone=timezone,
+            log_level=log_level,
+            log_directory=os.path.abspath(os.path.expanduser(
+                os.environ.get(
+                    "POS_LOG_DIRECTORY", os.path.join(installation_directory, "logs")
+                ).strip() or os.path.join(installation_directory, "logs")
+            )),
+            seed_sample_data=_bool_setting("POS_SEED_SAMPLE_DATA", True),
+        ),
+        updates=UpdateSettings(
+            channel=update_channel,
+            manifest_path=os.path.abspath(os.path.expanduser(
+                os.environ.get(
+                    "POS_UPDATE_MANIFEST",
+                    os.path.join(installation_directory, "updates", "manifest.json"),
+                ).strip() or os.path.join(installation_directory, "updates", "manifest.json")
+            )),
+            auto_check=_bool_setting("POS_AUTO_UPDATE_CHECK", False),
         ),
     )
 

@@ -90,6 +90,22 @@ reports accept repeated filters such as `?store_id=1&store_id=2`.
   printing, reprinting, templates, and audit reports.
 - `backup and disaster recovery`: create/list/verify/status, confirmation-gated
   restore, deletion, scheduling policy, and portable exports/imports.
+- `deployment`: version inventory, deployment health, installer metadata,
+  update status, verification, and compatibility checks.
+
+```http
+GET /api/v1/version
+Authorization: Bearer <token>
+```
+
+```http
+POST /api/v1/deployment/verify
+Authorization: Bearer <admin-token>
+```
+
+Deployment paths and installation verification are restricted to administrators;
+managers may inspect deployment and update status. No endpoint installs or
+executes an update package.
 
 Create and verify a named backup:
 

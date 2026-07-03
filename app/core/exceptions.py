@@ -93,5 +93,17 @@ class RestoreError(BackupError):
     """A database restore could not be completed safely."""
 
 
+class DeploymentError(ValidationError):
+    """Installation, repair, upgrade, or deployment verification failed."""
+
+
+class InstallationError(DeploymentError):
+    """The requested installation lifecycle operation could not complete."""
+
+
+class UpdateError(DeploymentError):
+    """An update manifest or staged package is invalid."""
+
+
 class ConfigurationError(ApplicationError, ValueError):
     """Application configuration is malformed."""

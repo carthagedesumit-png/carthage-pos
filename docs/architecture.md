@@ -42,6 +42,8 @@ Dependencies flow inward:
   lookup, and barcode operational reports.
 - `app/backup`: SQLite snapshots, manifests, verification, atomic restore,
   retention, scheduling policy, and portable data transfer.
+- `app/deployment`: setup validation, configuration generation, installation
+  lifecycle, deployment health, Windows integration metadata, and update staging.
 
 ## Service Interactions
 
@@ -75,6 +77,9 @@ service. Barcode migrations add `product_identifiers`, `barcode_audit`,
 `promotion_price` product fields. Existing barcodes are safely backfilled.
 Backup compatibility uses SQLite `PRAGMA user_version`; backup artifacts and
 sidecar metadata remain outside the transactional business database.
+Installer lifecycle operations use staging databases and SQLite snapshots.
+PyInstaller packages the Python entry points; Inno Setup owns Windows shortcuts,
+Programs and Features registration, file deployment, and executable uninstall.
 
 ## Configuration
 
