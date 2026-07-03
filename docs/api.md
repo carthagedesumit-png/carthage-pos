@@ -86,6 +86,24 @@ reports accept repeated filters such as `?store_id=1&store_id=2`.
 - `reports`: sales, inventory, branch, cashier, customer, wallet, credit, loyalty.
 - `documents`: receipt, invoice, credit note, PO, GRN, and transfer output.
 - `hardware`: status, printer diagnostics/jobs, cash drawer, scanner, and display.
+- `barcodes and labels`: identifier generation/assignment, lookup, previews,
+  printing, reprinting, templates, and audit reports.
+
+```http
+POST /api/v1/barcodes/products/1/generate
+Authorization: Bearer <manager-token>
+Content-Type: application/json
+
+{"format":"CODE128","identifier_type":"SECONDARY"}
+```
+
+```http
+POST /api/v1/barcodes/labels/preview
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"product_id":1,"template_code":"SMALL_PRODUCT"}
+```
 
 Document endpoints support `format=json`, `format=text`, and `format=html`.
 Thermal receipts and credit notes support `width_mm=58` or `width_mm=80`.

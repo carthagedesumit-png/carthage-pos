@@ -67,6 +67,7 @@ def initialize_database():
         migrate_categories_table(cursor)
         migrate_suppliers_table(cursor)
         migrate_products_table(cursor)
+        migrate_barcode_and_label_tables(cursor)
         migrate_store_inventory(cursor)
         migrate_stock_transfers(cursor)
         migrate_stock_movements_table(cursor)
@@ -297,6 +298,10 @@ def migrate_products_table(cursor):
     columns = get_table_columns(cursor, "products")
     if "description" not in columns:
         cursor.execute("ALTER TABLE products ADD COLUMN description TEXT")
+    if "unit" not in columns:
+        cursor.execute("ALTER TABLE products ADD COLUMN unit TEXT NOT NULL DEFAULT 'each'")
+    if "promotion_price" not in columns:
+        cursor.execute("ALTER TABLE products ADD COLUMN promotion_price REAL")
 
     for row in legacy_rows:
         cursor.execute("""
@@ -305,6 +310,92 @@ def migrate_products_table(cursor):
                 selling_price, quantity_in_stock, reorder_level, is_active
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
         """, (1, 1, row["product_id"], row["product_id"], row["name"], 0, row["price"], row["stock"], 0))
+
+
+def migrate_barcode_and_label_tables(cursor):
+    """Create normalized identifier, label job, and audit records safely."""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS product_identifiers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER NOT NULL,
+            identifier_type TEXT NOT NULL
+                CHECK (identifier_type IN ('PRIMARY', 'SECONDARY', 'SUPPLIER', 'QR')),
+            format TEXT NOT NULL
+                CHECK (format IN ('CODE39', 'CODE128', 'EAN8', 'EAN13', 'UPCA', 'QR')),
+            value TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            is_primary INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (product_id) REFERENCES products (id),
+            FOREIGN KEY (created_by) REFERENCES users (id)
+        )
+    """)
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_product_identifier_primary
+        ON product_identifiers (product_id) WHERE is_primary = 1 AND is_active = 1
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_product_identifier_product "
+        "ON product_identifiers (product_id, is_active)"
+    )
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS barcode_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER NOT NULL,
+            identifier_id INTEGER,
+            action TEXT NOT NULL,
+            old_value TEXT,
+            new_value TEXT,
+            format TEXT,
+            user_id INTEGER,
+            store_id INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (product_id) REFERENCES products (id),
+            FOREIGN KEY (identifier_id) REFERENCES product_identifiers (id),
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (store_id) REFERENCES stores (id)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS label_print_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_reference TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            store_id INTEGER NOT NULL,
+            template_code TEXT NOT NULL,
+            printer_profile TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('PENDING', 'PRINTED', 'FAILED')),
+            is_reprint INTEGER NOT NULL DEFAULT 0,
+            original_job_id INTEGER,
+            requested_by INTEGER NOT NULL,
+            requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME,
+            error_message TEXT,
+            FOREIGN KEY (store_id) REFERENCES stores (id),
+            FOREIGN KEY (original_job_id) REFERENCES label_print_jobs (id),
+            FOREIGN KEY (requested_by) REFERENCES users (id)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS label_print_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            identifier_id INTEGER,
+            quantity INTEGER NOT NULL CHECK (quantity > 0),
+            FOREIGN KEY (job_id) REFERENCES label_print_jobs (id),
+            FOREIGN KEY (product_id) REFERENCES products (id),
+            FOREIGN KEY (identifier_id) REFERENCES product_identifiers (id)
+        )
+    """)
+    cursor.execute("""
+        INSERT OR IGNORE INTO product_identifiers (
+            product_id, identifier_type, format, value, is_primary, is_active
+        )
+        SELECT id, 'PRIMARY', 'CODE128', barcode, 1, 1
+        FROM products WHERE barcode IS NOT NULL AND TRIM(barcode) != ''
+    """)
 
 
 def migrate_store_inventory(cursor):

@@ -30,6 +30,9 @@ def create_product(
     reorder_level=0,
     description=None,
     store_id=None,
+    unit="each",
+    promotion_price=None,
+    barcode_format=None,
 ):
     session = require_inventory_management(session, store_id=store_id)
     store_id = int(store_id or session.store_id)
@@ -39,20 +42,43 @@ def create_product(
     validate_non_negative(cost_price, "Cost price")
     validate_stock_value(quantity_in_stock, "Quantity in stock")
     validate_stock_value(reorder_level, "Reorder level")
+    unit = normalize_required(unit, "Unit")
+    if promotion_price is not None:
+        validate_non_negative(promotion_price, "Promotion price")
+    from app.barcodes.barcode_service import validate_identifier
+    from app.core.config import get_config
+    barcode_format = (barcode_format or get_config().barcodes.default_format).upper().replace("-", "")
+    barcode_value = validate_identifier(barcode, barcode_format) if barcode is not None else None
 
     try:
         with transaction() as conn:
             cursor = conn.execute(
                 """INSERT INTO products (
                     category_id, supplier_id, sku, barcode, name, description,
-                    cost_price, selling_price, quantity_in_stock, reorder_level, is_active
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1)""",
+                    cost_price, selling_price, quantity_in_stock, reorder_level, is_active,
+                    unit, promotion_price
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?)""",
                 (
-                    category_id, supplier_id, sku, barcode or sku, name, description,
-                    float(cost_price), float(selling_price),
+                    category_id, supplier_id, sku, barcode_value, name, description,
+                    float(cost_price), float(selling_price), unit,
+                    None if promotion_price is None else float(promotion_price),
                 ),
             )
             product_id = cursor.lastrowid
+            if barcode_value is None and get_config().barcodes.auto_generate:
+                from app.barcodes.barcode_service import _generated_value
+                barcode_value = validate_identifier(
+                    _generated_value({"id": product_id, "sku": sku}, barcode_format),
+                    barcode_format,
+                )
+                conn.execute("UPDATE products SET barcode = ? WHERE id = ?", (barcode_value, product_id))
+            if barcode_value is not None:
+                conn.execute(
+                    """INSERT INTO product_identifiers
+                       (product_id, identifier_type, format, value, is_primary, created_by)
+                       VALUES (?, 'PRIMARY', ?, ?, 1, ?)""",
+                    (product_id, barcode_format, barcode_value, session.user_id),
+                )
             conn.execute(
                 """INSERT INTO store_inventory (
                        store_id, product_id, quantity_on_hand, reorder_level, average_cost
@@ -88,20 +114,27 @@ def update_product(session, product_id, store_id=None, **updates):
     store_id = int(store_id or session.store_id)
     allowed = {
         "category_id", "supplier_id", "sku", "barcode", "name", "description",
-        "cost_price", "selling_price", "reorder_level", "is_active",
+        "cost_price", "selling_price", "reorder_level", "is_active", "unit",
+        "promotion_price",
     }
     changes = {key: value for key, value in updates.items() if key in allowed}
     if not changes:
         return get_product_by_id(product_id, store_id=store_id)
-    for field in ("cost_price", "selling_price"):
+    for field in ("cost_price", "selling_price", "promotion_price"):
         if field in changes:
-            validate_non_negative(changes[field], field.replace("_", " ").title())
+            if changes[field] is not None:
+                validate_non_negative(changes[field], field.replace("_", " ").title())
     if "reorder_level" in changes:
         validate_stock_value(changes["reorder_level"], "Reorder level")
     if "sku" in changes:
         changes["sku"] = normalize_required(changes["sku"], "SKU")
     if "name" in changes:
         changes["name"] = normalize_required(changes["name"], "Product name")
+    if "unit" in changes:
+        changes["unit"] = normalize_required(changes["unit"], "Unit")
+    if "barcode" in changes:
+        from app.barcodes.barcode_service import validate_identifier
+        changes["barcode"] = validate_identifier(changes["barcode"], "CODE128")
 
     store_reorder = changes.pop("reorder_level", None)
     store_cost = changes.get("cost_price")
@@ -115,6 +148,18 @@ def update_product(session, product_id, store_id=None, **updates):
                     f"UPDATE products SET {assignments}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     [*changes.values(), product_id],
                 )
+                if "barcode" in changes:
+                    conn.execute(
+                        "UPDATE product_identifiers SET is_primary = 0, is_active = 0, updated_at = CURRENT_TIMESTAMP "
+                        "WHERE product_id = ? AND is_primary = 1 AND is_active = 1",
+                        (product_id,),
+                    )
+                    conn.execute(
+                        """INSERT INTO product_identifiers
+                           (product_id, identifier_type, format, value, is_primary, created_by)
+                           VALUES (?, 'PRIMARY', 'CODE128', ?, 1, ?)""",
+                        (product_id, changes["barcode"], session.user_id),
+                    )
             ensure_store_inventory(conn, store_id, product_id)
             if store_reorder is not None:
                 conn.execute(
@@ -268,9 +313,11 @@ def search_products(term=None, include_inactive=False, store_id=None):
     if not include_inactive:
         filters.append("p.is_active = 1")
     if term:
-        filters.append("(p.sku LIKE ? OR p.barcode LIKE ? OR p.name LIKE ?)")
+        filters.append("(p.sku LIKE ? OR p.barcode LIKE ? OR p.name LIKE ? OR EXISTS "
+                       "(SELECT 1 FROM product_identifiers pi WHERE pi.product_id = p.id "
+                       "AND pi.is_active = 1 AND pi.value LIKE ?))")
         pattern = f"%{term}%"
-        params.extend([pattern, pattern, pattern])
+        params.extend([pattern, pattern, pattern, pattern])
     with get_connection() as conn:
         store_id = int(store_id or get_default_store_id(conn))
         filters.append("si.store_id = ?")
@@ -290,19 +337,8 @@ def search_products(term=None, include_inactive=False, store_id=None):
 
 
 def fetch_product_for_sale(identifier, store_id=None):
-    with get_connection() as conn:
-        store_id = int(store_id or get_default_store_id(conn))
-        row = conn.execute(
-            """SELECT p.id, p.sku AS product_id, p.name,
-                      p.selling_price AS price, si.quantity_on_hand AS stock,
-                      si.average_cost AS cost_price, si.store_id
-               FROM products p
-               JOIN store_inventory si ON si.product_id = p.id AND si.store_id = ?
-               WHERE p.is_active = 1
-                 AND (p.sku = ? OR p.barcode = ? OR CAST(p.id AS TEXT) = ?)""",
-            (store_id, identifier, identifier, identifier),
-        ).fetchone()
-        return dict(row) if row else None
+    from app.barcodes.barcode_service import lookup_product
+    return lookup_product(identifier, store_id=store_id)
 
 
 def fetch_all_inventory_for_sale(store_id=None):

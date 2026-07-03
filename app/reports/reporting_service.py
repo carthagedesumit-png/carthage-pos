@@ -1016,3 +1016,27 @@ def get_customer_lifetime_value(
         "lifetime_value": net_value,
         "average_transaction_value": _money(net_value / len(history)) if history else 0.0,
     }
+
+
+def get_products_without_barcode_report(session, store_id=None):
+    """Return active products lacking a primary identifier."""
+    from app.barcodes.reporting import products_without_barcode
+    return products_without_barcode(session, store_id)
+
+
+def get_duplicate_barcode_report(session):
+    """Return active duplicate identifiers; normally empty under DB constraints."""
+    from app.barcodes.reporting import duplicate_identifiers
+    return duplicate_identifiers(session)
+
+
+def get_labels_printed_report(session, store_id=None):
+    """Return label job history and printed quantities."""
+    from app.barcodes.reporting import labels_printed
+    return labels_printed(session, store_id)
+
+
+def get_barcode_audit_report(session, product_id=None):
+    """Return identifier assignment and regeneration history."""
+    from app.barcodes.reporting import barcode_audit
+    return barcode_audit(session, product_id)

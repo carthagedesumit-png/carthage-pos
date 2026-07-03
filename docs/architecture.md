@@ -38,6 +38,8 @@ Dependencies flow inward:
 - `app/customers`: customer profiles, groups, loyalty, wallet, and credit ledgers.
 - `app/reports`: refund-aware analytics and inventory valuation.
 - `app/documents`: side-effect-free business document assembly and rendering.
+- `app/barcodes`: normalized identifiers, label rendering/printing, scanner
+  lookup, and barcode operational reports.
 
 ## Service Interactions
 
@@ -66,7 +68,9 @@ Schema changes are idempotent functions in `app/database/db_manager.py` and run
 through `initialize_database()`. A migration must preserve historical records,
 use additive changes where possible, backfill deterministic values, and be
 covered by a legacy-schema test. Never perform schema migration from a domain
-service. This hardening milestone requires no database migration.
+service. Barcode migrations add `product_identifiers`, `barcode_audit`,
+`label_print_jobs`, and `label_print_items`, plus additive `unit` and
+`promotion_price` product fields. Existing barcodes are safely backfilled.
 
 ## Configuration
 

@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 
 from app.api.errors import install_exception_handlers
 from app.api.schemas import ErrorResponse
-from app.api.routers import core, customers, documents, hardware, operations, reports
+from app.api.routers import barcodes, core, customers, documents, hardware, operations, reports
 from app.core.logging_utils import get_logger, log_event
 from app.database.db_manager import initialize_database
 
@@ -46,6 +46,7 @@ def create_app(*, initialize: bool = True) -> FastAPI:
     application.include_router(reports.router, prefix="/api/v1")
     application.include_router(documents.router, prefix="/api/v1")
     application.include_router(hardware.router, prefix="/api/v1")
+    application.include_router(barcodes.router, prefix="/api/v1")
 
     @application.middleware("http")
     async def request_logging(request: Request, call_next):

@@ -111,6 +111,9 @@ class ProductCreateRequest(ApiModel):
     reorder_level: int = Field(default=0, ge=0)
     description: Optional[str] = None
     store_id: Optional[int] = Field(default=None, gt=0)
+    unit: str = Field(default="each", min_length=1)
+    promotion_price: Optional[float] = Field(default=None, ge=0)
+    barcode_format: Optional[Literal["CODE39", "CODE128", "EAN8", "EAN13", "UPCA", "QR"]] = None
 
 
 class ProductUpdateRequest(ApiModel):
@@ -124,6 +127,8 @@ class ProductUpdateRequest(ApiModel):
     selling_price: Optional[float] = Field(default=None, ge=0)
     reorder_level: Optional[int] = Field(default=None, ge=0)
     is_active: Optional[bool] = None
+    unit: Optional[str] = Field(default=None, min_length=1)
+    promotion_price: Optional[float] = Field(default=None, ge=0)
 
 
 class StockAdjustmentRequest(ApiModel):
@@ -310,3 +315,41 @@ class ScannerLookupRequest(ApiModel):
 
 class DisplayMessageRequest(ApiModel):
     message: str = Field(min_length=1, max_length=200)
+
+
+BarcodeFormat = Literal["CODE39", "CODE128", "EAN8", "EAN13", "UPCA", "QR"]
+IdentifierType = Literal["PRIMARY", "SECONDARY", "SUPPLIER", "QR"]
+
+
+class BarcodeGenerateRequest(ApiModel):
+    format: Optional[BarcodeFormat] = None
+    identifier_type: IdentifierType = "PRIMARY"
+    regenerate: bool = False
+
+
+class BarcodeAssignRequest(ApiModel):
+    value: str = Field(min_length=1, max_length=2048)
+    format: BarcodeFormat
+    identifier_type: IdentifierType = "PRIMARY"
+    primary: Optional[bool] = None
+
+
+class LabelPreviewRequest(ApiModel):
+    product_id: int = Field(gt=0)
+    template_code: Optional[str] = None
+    store_id: Optional[int] = Field(default=None, gt=0)
+    width_mm: Optional[float] = Field(default=None, gt=0)
+    height_mm: Optional[float] = Field(default=None, gt=0)
+    include_cost: bool = False
+
+
+class LabelItemRequest(ApiModel):
+    product_id: int = Field(gt=0)
+    quantity: int = Field(default=1, gt=0)
+
+
+class LabelPrintRequest(ApiModel):
+    items: list[LabelItemRequest] = Field(min_length=1)
+    template_code: Optional[str] = None
+    store_id: Optional[int] = Field(default=None, gt=0)
+    printer_profile: Optional[Literal["58mm", "80mm", "generic"]] = None

@@ -24,6 +24,8 @@ unauthorized manual drawer operations still raise normal application errors.
 - File spool printer: appends jobs to a configured UTF-8 path for integration.
 - Cash drawers: printer-pulse abstraction or an independently injected adapter.
 - Barcode scanners: keyboard-wedge input with trailing Enter/CR normalization.
+- Label printers: label text uses the same injectable printer contract and
+  58mm, 80mm, or generic printer profiles.
 - Customer displays: welcome, item, totals, payment, and clear operations.
 
 No vendor SDK or machine-specific device name is required by the core project.
@@ -74,3 +76,5 @@ request and response contracts.
 
 ESC/POS, USB, serial, network-print, and vendor display SDK adapters can be
 added independently without changing checkout or document-generation logic.
+Production barcode engines implement `BarcodeRenderer`; the default renderer
+intentionally produces dependency-free preview placeholders.

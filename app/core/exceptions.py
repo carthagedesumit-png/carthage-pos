@@ -77,5 +77,13 @@ class ScannerError(HardwareError):
     """A scanner input or lookup is invalid."""
 
 
+class BarcodeError(ValidationError):
+    """A product identifier is invalid or conflicts with catalog data."""
+
+
+class LabelError(ValidationError):
+    """A product label cannot be rendered or printed."""
+
+
 class ConfigurationError(ApplicationError, ValueError):
     """Application configuration is malformed."""

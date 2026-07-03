@@ -104,7 +104,8 @@ def lookup_scanned_product(
         normalized = normalize_barcode(raw_value)
     else:
         raise HardwareUnavailableError("Barcode scanner is disabled or unavailable.")
-    product = fetch_product_for_sale(normalized, store_id=selected_store)
+    from app.barcodes.barcode_service import lookup_product
+    product = lookup_product(normalized, store_id=selected_store, session=session)
     if not product:
         _record_event(session, "scanner_lookup_failed", "scanner", "lookup", False, "Product not found")
         raise ScannerError("Product not found for barcode or SKU.")

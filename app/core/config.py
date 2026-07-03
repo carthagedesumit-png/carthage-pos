@@ -66,6 +66,18 @@ class HardwareSettings:
 
 
 @dataclass(frozen=True)
+class BarcodeSettings:
+    default_format: str = "CODE128"
+    default_label_template: str = "SMALL_PRODUCT"
+    default_printer_profile: str = "generic"
+    default_label_width_mm: float = 50.0
+    default_label_height_mm: float = 30.0
+    company_prefix: str = "POS"
+    auto_generate: bool = False
+    qr_enabled: bool = True
+
+
+@dataclass(frozen=True)
 class ReportSettings:
     default_limit: int = 10
     slow_moving_days: int = 30
@@ -82,6 +94,7 @@ class AppConfig:
     loyalty: LoyaltySettings = field(default_factory=LoyaltySettings)
     api: ApiSettings = field(default_factory=ApiSettings)
     hardware: HardwareSettings = field(default_factory=HardwareSettings)
+    barcodes: BarcodeSettings = field(default_factory=BarcodeSettings)
 
 
 def _int_setting(name: str, default: int, *, positive: bool = False) -> int:
@@ -137,6 +150,15 @@ def get_config() -> AppConfig:
     width = _int_setting("POS_RECEIPT_WIDTH_MM", 80, positive=True)
     if width not in {58, 80}:
         raise ConfigurationError("POS_RECEIPT_WIDTH_MM must be 58 or 80.")
+    barcode_format = os.environ.get("POS_DEFAULT_BARCODE_FORMAT", "CODE128").strip().upper().replace("-", "")
+    if barcode_format not in {"CODE39", "CODE128", "EAN8", "EAN13", "UPCA", "QR"}:
+        raise ConfigurationError("POS_DEFAULT_BARCODE_FORMAT is unsupported.")
+    label_template = os.environ.get("POS_DEFAULT_LABEL_TEMPLATE", "SMALL_PRODUCT").strip().upper()
+    if label_template not in {"SHELF", "SMALL_PRODUCT", "LARGE_PRODUCT", "WAREHOUSE", "BARCODE_ONLY", "QR"}:
+        raise ConfigurationError("POS_DEFAULT_LABEL_TEMPLATE is unsupported.")
+    label_profile = os.environ.get("POS_LABEL_PRINTER_PROFILE", "generic").strip().lower()
+    if label_profile not in {"58mm", "80mm", "generic"}:
+        raise ConfigurationError("POS_LABEL_PRINTER_PROFILE must be 58mm, 80mm, or generic.")
     return AppConfig(
         tax_rate=_float_setting("POS_DEFAULT_TAX_RATE", 0.0),
         company=CompanySettings(
@@ -186,6 +208,16 @@ def get_config() -> AppConfig:
             open_drawer_after_cash_sale=_bool_setting("POS_OPEN_DRAWER_AFTER_CASH_SALE", False),
             scanner_enabled=_bool_setting("POS_SCANNER_ENABLED", True),
             customer_display_enabled=_bool_setting("POS_CUSTOMER_DISPLAY_ENABLED", False),
+        ),
+        barcodes=BarcodeSettings(
+            default_format=barcode_format,
+            default_label_template=label_template,
+            default_printer_profile=label_profile,
+            default_label_width_mm=_positive_float_setting("POS_LABEL_WIDTH_MM", 50.0),
+            default_label_height_mm=_positive_float_setting("POS_LABEL_HEIGHT_MM", 30.0),
+            company_prefix=os.environ.get("POS_BARCODE_COMPANY_PREFIX", "POS").strip().upper(),
+            auto_generate=_bool_setting("POS_AUTO_GENERATE_BARCODES", False),
+            qr_enabled=_bool_setting("POS_QR_ENABLED", True),
         ),
     )
 
