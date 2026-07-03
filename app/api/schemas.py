@@ -353,3 +353,30 @@ class LabelPrintRequest(ApiModel):
     template_code: Optional[str] = None
     store_id: Optional[int] = Field(default=None, gt=0)
     printer_profile: Optional[Literal["58mm", "80mm", "generic"]] = None
+
+
+class BackupCreateRequest(ApiModel):
+    name: Optional[str] = Field(default=None, max_length=80)
+    backup_type: Literal["FULL", "INCREMENTAL"] = "FULL"
+    compression: Optional[bool] = None
+
+
+class BackupRestoreRequest(ApiModel):
+    backup_id: Optional[str] = None
+    use_latest: bool = False
+    dry_run: bool = True
+    confirmation: Optional[str] = None
+
+
+class BackupVerifyRequest(ApiModel):
+    backup_id: str = Field(min_length=1)
+
+
+class BackupSchedulerRequest(ApiModel):
+    schedule: Literal["MANUAL", "DAILY", "WEEKLY", "MONTHLY"]
+    enabled: bool = True
+
+
+class DataImportRequest(ApiModel):
+    format: Literal["JSON", "CSV"] = "JSON"
+    content: str = Field(min_length=1)

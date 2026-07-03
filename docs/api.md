@@ -88,6 +88,29 @@ reports accept repeated filters such as `?store_id=1&store_id=2`.
 - `hardware`: status, printer diagnostics/jobs, cash drawer, scanner, and display.
 - `barcodes and labels`: identifier generation/assignment, lookup, previews,
   printing, reprinting, templates, and audit reports.
+- `backup and disaster recovery`: create/list/verify/status, confirmation-gated
+  restore, deletion, scheduling policy, and portable exports/imports.
+
+Create and verify a named backup:
+
+```http
+POST /api/v1/backups
+Authorization: Bearer <manager-token>
+Content-Type: application/json
+
+{"name":"end-of-day","backup_type":"FULL","compression":true}
+```
+
+```http
+POST /api/v1/backups/verify
+Authorization: Bearer <manager-token>
+Content-Type: application/json
+
+{"backup_id":"BKP-20260703183000-A1B2C3D4"}
+```
+
+Restore requests default to dry-run validation. A real restore requires an
+administrator and the exact confirmation returned by the dry run.
 
 ```http
 POST /api/v1/barcodes/products/1/generate

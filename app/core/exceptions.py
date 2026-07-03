@@ -85,5 +85,13 @@ class LabelError(ValidationError):
     """A product label cannot be rendered or printed."""
 
 
+class BackupError(ValidationError):
+    """A backup, verification, retention, or export operation failed."""
+
+
+class RestoreError(BackupError):
+    """A database restore could not be completed safely."""
+
+
 class ConfigurationError(ApplicationError, ValueError):
     """Application configuration is malformed."""

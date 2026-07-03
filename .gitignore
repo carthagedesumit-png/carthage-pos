@@ -223,6 +223,8 @@ __marimo__/
 .venv/
 *.db
 *.sqlite
+*.sqlite3
+backups/
 .vs/
 .idea/
 .vscode/

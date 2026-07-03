@@ -78,6 +78,18 @@ class BarcodeSettings:
 
 
 @dataclass(frozen=True)
+class BackupSettings:
+    directory: str = ""
+    retention_days: int = 30
+    max_count: int = 30
+    compression_enabled: bool = True
+    overwrite_enabled: bool = False
+    auto_before_restore: bool = True
+    verify_after_create: bool = True
+    schedule: str = "MANUAL"
+
+
+@dataclass(frozen=True)
 class ReportSettings:
     default_limit: int = 10
     slow_moving_days: int = 30
@@ -95,6 +107,7 @@ class AppConfig:
     api: ApiSettings = field(default_factory=ApiSettings)
     hardware: HardwareSettings = field(default_factory=HardwareSettings)
     barcodes: BarcodeSettings = field(default_factory=BarcodeSettings)
+    backup: BackupSettings = field(default_factory=BackupSettings)
 
 
 def _int_setting(name: str, default: int, *, positive: bool = False) -> int:
@@ -159,6 +172,12 @@ def get_config() -> AppConfig:
     label_profile = os.environ.get("POS_LABEL_PRINTER_PROFILE", "generic").strip().lower()
     if label_profile not in {"58mm", "80mm", "generic"}:
         raise ConfigurationError("POS_LABEL_PRINTER_PROFILE must be 58mm, 80mm, or generic.")
+    backup_schedule = os.environ.get("POS_BACKUP_SCHEDULE", "MANUAL").strip().upper()
+    if backup_schedule not in {"MANUAL", "DAILY", "WEEKLY", "MONTHLY"}:
+        raise ConfigurationError("POS_BACKUP_SCHEDULE must be MANUAL, DAILY, WEEKLY, or MONTHLY.")
+    default_backup_directory = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "backups")
+    )
     return AppConfig(
         tax_rate=_float_setting("POS_DEFAULT_TAX_RATE", 0.0),
         company=CompanySettings(
@@ -218,6 +237,19 @@ def get_config() -> AppConfig:
             company_prefix=os.environ.get("POS_BARCODE_COMPANY_PREFIX", "POS").strip().upper(),
             auto_generate=_bool_setting("POS_AUTO_GENERATE_BARCODES", False),
             qr_enabled=_bool_setting("POS_QR_ENABLED", True),
+        ),
+        backup=BackupSettings(
+            directory=os.path.abspath(os.path.expanduser(
+                os.environ.get("POS_BACKUP_DIRECTORY", default_backup_directory).strip()
+                or default_backup_directory
+            )),
+            retention_days=_int_setting("POS_BACKUP_RETENTION_DAYS", 30),
+            max_count=_int_setting("POS_BACKUP_MAX_COUNT", 30, positive=True),
+            compression_enabled=_bool_setting("POS_BACKUP_COMPRESSION", True),
+            overwrite_enabled=_bool_setting("POS_BACKUP_OVERWRITE", False),
+            auto_before_restore=_bool_setting("POS_BACKUP_AUTO_BEFORE_RESTORE", True),
+            verify_after_create=_bool_setting("POS_BACKUP_VERIFY_AFTER_CREATE", True),
+            schedule=backup_schedule,
         ),
     )
 

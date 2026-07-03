@@ -40,6 +40,8 @@ Dependencies flow inward:
 - `app/documents`: side-effect-free business document assembly and rendering.
 - `app/barcodes`: normalized identifiers, label rendering/printing, scanner
   lookup, and barcode operational reports.
+- `app/backup`: SQLite snapshots, manifests, verification, atomic restore,
+  retention, scheduling policy, and portable data transfer.
 
 ## Service Interactions
 
@@ -71,6 +73,8 @@ covered by a legacy-schema test. Never perform schema migration from a domain
 service. Barcode migrations add `product_identifiers`, `barcode_audit`,
 `label_print_jobs`, and `label_print_items`, plus additive `unit` and
 `promotion_price` product fields. Existing barcodes are safely backfilled.
+Backup compatibility uses SQLite `PRAGMA user_version`; backup artifacts and
+sidecar metadata remain outside the transactional business database.
 
 ## Configuration
 

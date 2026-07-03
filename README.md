@@ -16,6 +16,7 @@ Enterprise-grade supermarket POS terminal engine for inventory management and sa
 - Versioned FastAPI integration layer with OpenAPI documentation
 - Adapter-based receipt printer, cash drawer, scanner, and customer display support
 - Multi-format product identifiers, reusable labels, previews, and audited label printing
+- Verified database backups, rollback-safe restore, retention, scheduling, and portable exports
 
 ## First-run setup
 
@@ -58,3 +59,5 @@ Hardware configuration and mock-device testing are documented in
 [`docs/hardware.md`](docs/hardware.md).
 Barcode formats, label templates, configuration, and printing workflows are in
 [`docs/barcodes.md`](docs/barcodes.md).
+Backup operations and the disaster recovery checklist are documented in
+[`docs/backup.md`](docs/backup.md).

@@ -1,6 +1,8 @@
 import os
 import sqlite3
 
+from app.core.version import DATABASE_SCHEMA_VERSION
+
 
 DEFAULT_SYSTEM_USERNAME = "system"
 MOVEMENT_TYPES = {"PURCHASE", "SALE", "ADJUSTMENT", "RETURN"}
@@ -78,6 +80,7 @@ def initialize_database():
         migrate_sales_returns_table(cursor)
         migrate_customer_financial_tables(cursor)
         migrate_inventory_compatibility(cursor)
+        cursor.execute(f"PRAGMA user_version = {DATABASE_SCHEMA_VERSION}")
     print("Carthage POS Database Initialized Successfully.")
 
 
