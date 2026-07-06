@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from time import perf_counter
 
 from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
 
 from app.api.errors import install_exception_handlers
 from app.api.licensing_middleware import enforce_api_license
@@ -15,6 +16,8 @@ from app.api.routers import (
 from app.core.logging_utils import get_logger, log_event
 from app.core.version import APP_VERSION
 from app.database.db_manager import initialize_database
+from app.dashboard.router import router as dashboard_router
+from app.dashboard.api.dashboard_api import router as dashboard_api_router
 
 
 logger = get_logger("api.requests")
@@ -45,6 +48,13 @@ def create_app(*, initialize: bool = True) -> FastAPI:
         },
     )
     install_exception_handlers(application)
+    application.mount(
+        "/dashboard/static",
+        StaticFiles(directory="app/dashboard/static"),
+        name="dashboard_static",
+    )
+    application.include_router(dashboard_router)
+    application.include_router(dashboard_api_router)
     application.include_router(core.router, prefix="/api/v1")
     application.include_router(operations.router, prefix="/api/v1")
     application.include_router(customers.router, prefix="/api/v1")
