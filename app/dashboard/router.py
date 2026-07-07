@@ -9,14 +9,26 @@ templates = Jinja2Templates(directory="app/dashboard/templates")
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
+def get_header():
+    """
+    Temporary header information.
+    Later this will come from the authenticated user session.
+    """
+    return {
+        "user": "Administrator",
+        "store": "Main Store",
+    }
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard_home(request: Request):
     return templates.TemplateResponse(
-        request,
         "overview.html",
         {
+            "request": request,
             "title": "Carthage POS Executive Dashboard",
             "metrics": get_dashboard_summary(),
+            "header": get_header(),
         },
     )
 
@@ -37,9 +49,13 @@ def dashboard_health():
 @router.get("/login", response_class=HTMLResponse)
 def dashboard_login(request: Request):
     return templates.TemplateResponse(
-        request,
         "login.html",
         {
+            "request": request,
             "title": "Dashboard Login",
+            "header": {
+                "user": "Guest",
+                "store": "",
+            },
         },
     )
