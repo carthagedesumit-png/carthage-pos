@@ -18,53 +18,29 @@
 </section>
 
 <section class="cards">
-    <div class="card accent-green"><span>Today's Sales</span><strong>{{ metrics.today_sales }}</strong></div>
-    <div class="card accent-blue"><span>Today's Profit</span><strong>{{ metrics.today_profit }}</strong></div>
-    <div class="card accent-blue"><span>Transactions</span><strong>{{ metrics.transactions }}</strong></div>
-    <div class="card accent-amber"><span>Low Stock</span><strong>{{ metrics.low_stock }}</strong></div>
-    <div class="card accent-red"><span>Outstanding Credit</span><strong>{{ metrics.outstanding_credit }}</strong></div>
-    <div class="card accent-green"><span>Inventory Value</span><strong>{{ metrics.inventory_value }}</strong></div>
+    <div class="card"><span>Today's Sales</span><strong>{{ metrics.today_sales }}</strong></div>
+    <div class="card"><span>Today's Profit</span><strong>{{ metrics.today_profit }}</strong></div>
+    <div class="card"><span>Transactions</span><strong>{{ metrics.transactions }}</strong></div>
+    <div class="card"><span>Low Stock</span><strong>{{ metrics.low_stock }}</strong></div>
+    <div class="card"><span>Outstanding Credit</span><strong>{{ metrics.outstanding_credit }}</strong></div>
+    <div class="card"><span>Inventory Value</span><strong>{{ metrics.inventory_value }}</strong></div>
     <div class="card"><span>Customers</span><strong>{{ metrics.customers }}</strong></div>
     <div class="card"><span>Stores</span><strong>{{ metrics.stores }}</strong></div>
     <div class="card"><span>Users</span><strong>{{ metrics.users }}</strong></div>
 </section>
 
 <section class="dashboard-grid">
-    <div class="panel">
-        <h2>Sales Trend</h2>
-        <div class="chart-bars">
-            <span style="height:25%"></span>
-            <span style="height:45%"></span>
-            <span style="height:35%"></span>
-            <span style="height:65%"></span>
-            <span style="height:55%"></span>
-            <span style="height:80%"></span>
-            <span style="height:70%"></span>
-            <span style="height:90%"></span>
-        </div>
-        <p class="muted">Chart foundation ready. Live hourly sales comes next.</p>
-    </div>
 
-    <div class="panel">
-        <h2>System Health</h2>
-        <div class="health-list">
-            <div class="health-item"><span><i class="dot green"></i>API</span><strong>{{ metrics.api_status }}</strong></div>
-            <div class="health-item"><span><i class="dot green"></i>License</span><strong>{{ metrics.license_status }}</strong></div>
-            <div class="health-item"><span><i class="dot green"></i>Backup</span><strong>{{ metrics.backup_status }}</strong></div>
-            <div class="health-item"><span><i class="dot amber"></i>Hardware</span><strong>{{ metrics.hardware_status }}</strong></div>
-        </div>
-    </div>
-</section>
-
-<section class="dashboard-grid">
     <div class="panel">
         <h2>Recent Sales</h2>
+
         <table class="table">
             <thead>
                 <tr>
                     <th>Receipt</th>
-                    <th>Payment</th>
+                    <th>Customer</th>
                     <th>Amount</th>
+                    <th>Store</th>
                     <th>Time</th>
                 </tr>
             </thead>
@@ -72,12 +48,57 @@
                 {% for sale in metrics.recent_sales %}
                 <tr>
                     <td>{{ sale.receipt }}</td>
-                    <td>{{ sale.payment }}</td>
-                    <td>₦{{ "%.2f"|format(sale.amount) }}</td>
-                    <td>{{ sale.sale_time }}</td>
+                    <td>{{ sale.customer }}</td>
+                    <td>{{ sale.amount }}</td>
+                    <td>{{ sale.store }}</td>
+                    <td>{{ sale.time }}</td>
                 </tr>
                 {% else %}
-                <tr><td colspan="4">No recent sales yet.</td></tr>
+                <tr>
+                    <td colspan="5">No recent sales yet.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="panel">
+        <h2>System Health</h2>
+
+        <div class="health-list">
+            <div class="health-item"><span class="health-label"><span class="dot green"></span> API</span><strong>{{ metrics.api_status }}</strong></div>
+            <div class="health-item"><span class="health-label"><span class="dot green"></span> License</span><strong>{{ metrics.license_status }}</strong></div>
+            <div class="health-item"><span class="health-label"><span class="dot green"></span> Backup</span><strong>{{ metrics.backup_status }}</strong></div>
+            <div class="health-item"><span class="health-label"><span class="dot amber"></span> Hardware</span><strong>{{ metrics.hardware_status }}</strong></div>
+        </div>
+    </div>
+
+</section>
+
+<section class="dashboard-grid">
+
+    <div class="panel">
+        <h2>Low Stock Alerts</h2>
+
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Qty</th>
+                    <th>Reorder</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in metrics.low_stock_items %}
+                <tr>
+                    <td>{{ item.name }}</td>
+                    <td>{{ item.quantity }}</td>
+                    <td>{{ item.reorder_level }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="3">No low stock alerts.</td>
+                </tr>
                 {% endfor %}
             </tbody>
         </table>
@@ -85,64 +106,42 @@
 
     <div class="panel">
         <h2>Quick Actions</h2>
+
         <div class="quick-actions">
-            <a href="#">🛒 New Sale</a>
-            <a href="#">📦 Receive Stock</a>
-            <a href="#">👤 New Customer</a>
-            <a href="#">💾 Backup Database</a>
-            <a href="#">📈 View Reports</a>
+            <a class="quick-action" href="#"><span>🛒</span>New Sale</a>
+            <a class="quick-action" href="#"><span>📦</span>Receive Stock</a>
+            <a class="quick-action" href="#"><span>👤</span>New Customer</a>
+            <a class="quick-action" href="#"><span>💾</span>Backup</a>
+            <a class="quick-action" href="#"><span>📊</span>Reports</a>
         </div>
     </div>
+
 </section>
 
 <section class="dashboard-grid">
+
     <div class="panel">
-        <h2>Low Stock Alerts</h2>
-        <div class="notification-list">
-            {% for item in metrics.low_stock_items %}
-            <div class="notification-item">
-                <span>{{ item.name }}</span>
-                <strong>{{ item.quantity_on_hand }} / {{ item.reorder_level }}</strong>
-            </div>
-            {% else %}
-            <div class="notification-item"><span>No low stock alerts.</span><strong>OK</strong></div>
-            {% endfor %}
+        <h2>Sales Trend</h2>
+        <div class="chart-placeholder">
+            <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
+            <div class="bar"></div><div class="bar"></div><div class="bar"></div>
         </div>
+        <p>Chart foundation ready. Live hourly sales comes next.</p>
     </div>
 
     <div class="panel">
         <h2>Notifications</h2>
+
         <div class="notification-list">
             {% for note in metrics.notifications %}
             <div class="notification-item">
-                <span>{{ note.message }}</span>
-                <strong>{{ note.time }}</strong>
+                <strong>{{ note.message }}</strong>
+                <span>{{ note.time }}</span>
             </div>
             {% endfor %}
         </div>
     </div>
-</section>
 
-<section class="dashboard-grid">
-    <div class="panel">
-        <h2>Recent Customers</h2>
-        <div class="notification-list">
-            {% for customer in metrics.recent_customers %}
-            <div class="notification-item">
-                <span>{{ customer.name }}</span>
-                <strong>{{ customer.customer_code }}</strong>
-            </div>
-            {% else %}
-            <div class="notification-item"><span>No customers yet.</span><strong>CRM</strong></div>
-            {% endfor %}
-        </div>
-    </div>
-
-    <div class="panel">
-        <h2>Business Health</h2>
-        <p class="business-score">72%</p>
-        <p class="muted">Business health score placeholder. Real scoring comes next.</p>
-    </div>
 </section>
 
 {% endblock %}

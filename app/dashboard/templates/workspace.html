@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="hero">
+    <div>
+        <h1>{{ page_title }}</h1>
+        <p>{{ page_subtitle }}</p>
+        <small>{{ header.store }} · {{ header.user }}</small>
+    </div>
+
+    <div class="hero-status">
+        <span class="status success">API Online</span>
+        <span class="status success">License Active</span>
+    </div>
+</section>
+
+<section class="cards">
+    {% for card in cards %}
+    <div class="card">
+        <span>{{ card.label }}</span>
+        <strong>{{ card.value }}</strong>
+    </div>
+    {% endfor %}
+</section>
+
+<section class="dashboard-grid">
+
+    <div class="panel">
+        <h2>{{ main_panel_title }}</h2>
+        <p>{{ main_panel_text }}</p>
+    </div>
+
+    <div class="panel">
+        <h2>Next Build Steps</h2>
+        <div class="notification-list">
+            {% for step in steps %}
+            <div class="notification-item">
+                <strong>{{ step.title }}</strong>
+                <span>{{ step.text }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+</section>
+
+{% endblock %}

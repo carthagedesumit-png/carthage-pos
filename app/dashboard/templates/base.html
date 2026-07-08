@@ -19,13 +19,13 @@
         </div>
 
         <nav class="sidebar-menu">
-            <a href="/dashboard/">🏠 Dashboard</a>
-            <a href="#">🛒 Sales</a>
-            <a href="#">📦 Inventory</a>
-            <a href="#">👥 Customers</a>
-            <a href="#">🚚 Procurement</a>
-            <a href="#">📈 Reports</a>
-            <a href="#">⚙ Settings</a>
+            <a class="{{ 'active' if active_page == 'dashboard' else '' }}" href="/dashboard/">🏠 Dashboard</a>
+            <a class="{{ 'active' if active_page == 'sales' else '' }}" href="/dashboard/sales">🛒 Sales</a>
+            <a class="{{ 'active' if active_page == 'inventory' else '' }}" href="/dashboard/inventory">📦 Inventory</a>
+            <a class="{{ 'active' if active_page == 'customers' else '' }}" href="/dashboard/customers">👥 Customers</a>
+            <a class="{{ 'active' if active_page == 'procurement' else '' }}" href="/dashboard/procurement">🚚 Procurement</a>
+            <a class="{{ 'active' if active_page == 'reports' else '' }}" href="/dashboard/reports">📈 Reports</a>
+            <a class="{{ 'active' if active_page == 'system' else '' }}" href="/dashboard/system">⚙ System</a>
         </nav>
 
     </aside>

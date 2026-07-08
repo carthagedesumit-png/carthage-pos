@@ -344,3 +344,8 @@ body {
 .quick-actions a {
     box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
 }
+
+.sidebar-menu a.active {
+    background: #2563eb;
+    color: white;
+}
