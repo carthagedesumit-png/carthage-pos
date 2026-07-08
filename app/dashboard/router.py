@@ -213,3 +213,21 @@ def dashboard_login(request: Request):
             "header": {"user": "Guest", "store": ""},
         },
     )
+
+
+from app.dashboard.services.bi_service import sales_trend, top_products, business_insights
+
+
+@router.get("/api/sales-trend")
+def dashboard_sales_trend():
+    return {"trend": sales_trend()}
+
+
+@router.get("/api/top-products")
+def dashboard_top_products():
+    return {"products": top_products()}
+
+
+@router.get("/api/insights")
+def dashboard_insights():
+    return {"insights": business_insights()}
