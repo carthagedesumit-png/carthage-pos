@@ -214,6 +214,68 @@ These endpoints use dashboard-specific read helpers and return safe empty
 structures when supplier, purchase order, purchase order item, receipt, product,
 store, or user tables are unavailable.
 
+## Reports & Analytics Workspace
+
+`GET /dashboard/reports` renders the Reports & Analytics Workspace V1
+executive intelligence page. It is a read-only portal that composes existing
+reporting, dashboard, sales, inventory, customer, procurement, and store read
+models without owning business mutations.
+
+The page includes:
+
+- Summary cards for net sales, estimated profit, inventory value, and refunds.
+- Report filter controls that preserve selected query parameters.
+- Overview sections for Sales Summary, Product Performance, Cashier
+  Performance, Store Performance, Customer Performance, Inventory Valuation,
+  Procurement Summary, and Refund Summary.
+- Route-ready CSV, Excel, PDF, and print report placeholders marked as coming
+  soon.
+- Empty-state handling when analytics rows are unavailable.
+
+Supported query parameters:
+
+- `date_from`
+- `date_to`
+- `store_id`
+- `cashier_id`
+- `customer_id`
+- `product_id`
+- `category_id`
+- `supplier_id`
+- `report_type` with `overview`, `sales`, `products`, `cashiers`, `stores`,
+  `customers`, `inventory`, `procurement`, or `refunds`
+
+Report detail foundation pages are available at:
+
+- `GET /dashboard/reports/sales`
+- `GET /dashboard/reports/inventory`
+- `GET /dashboard/reports/customers`
+- `GET /dashboard/reports/procurement`
+- `GET /dashboard/reports/stores`
+
+Each detail page extends the shared dashboard layout, shows summary cards, uses
+basic filters, displays a table foundation, and keeps export/print actions
+read-only placeholders.
+
+## Reports JSON Endpoints
+
+The dashboard exposes lightweight JSON endpoints for report workspace data:
+
+- `GET /dashboard/api/reports/summary`
+- `GET /dashboard/api/reports/sales`
+- `GET /dashboard/api/reports/products`
+- `GET /dashboard/api/reports/cashiers`
+- `GET /dashboard/api/reports/stores`
+- `GET /dashboard/api/reports/customers`
+- `GET /dashboard/api/reports/inventory`
+- `GET /dashboard/api/reports/procurement`
+- `GET /dashboard/api/reports/refunds`
+- `GET /dashboard/api/reports/export/{export_format}`
+
+The export endpoint currently returns a `coming_soon` placeholder for `csv`,
+`excel`, `pdf`, and `print` formats. Full export generation remains outside
+Reports Workspace V1.
+
 ## Authorization Foundation
 
 The current dashboard has a placeholder identity boundary in the dashboard
@@ -233,6 +295,7 @@ activation documents, bearer tokens, or payment credentials.
 - Inventory workspace actions are read-only.
 - CRM workspace actions are read-only.
 - Procurement workspace actions are read-only.
+- Reports workspace actions are read-only.
 - Full dashboard browser authentication is not enabled yet.
 - Store, cashier, and customer filters currently accept IDs instead of lookup
   selectors.
@@ -245,5 +308,6 @@ activation documents, bearer tokens, or payment credentials.
 - Statement, print, and export actions in CRM are placeholders.
 - Purchase order, goods received note, supplier statement, export, and print
   actions in Procurement are placeholders.
+- CSV, Excel, PDF, and print actions in Reports are placeholders.
 - Receipt preview availability depends on the existing document service and the
   persisted sale schema.

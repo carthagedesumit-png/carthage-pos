@@ -425,6 +425,8 @@ body {
 .crm-table-panel,
 .procurement-workspace,
 .procurement-table-panel,
+.reports-workspace,
+.reports-table-panel,
 .receipt-panel {
     margin-top: 24px;
 }
@@ -540,6 +542,10 @@ body {
 
 .procurement-detail-table {
     min-width: 940px;
+}
+
+.report-table {
+    min-width: 860px;
 }
 
 .crm-table td small {
@@ -673,6 +679,38 @@ body {
 .detail-list strong {
     color: var(--text);
     text-align: right;
+}
+
+.compact-detail-list span {
+    padding: 10px 12px;
+}
+
+.reports-nav {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin: 24px 0 0;
+}
+
+.reports-nav a {
+    display: block;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: white;
+    color: #1d4ed8;
+    text-decoration: none;
+    font-weight: 800;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
+}
+
+.reports-nav a:hover {
+    border-color: var(--accent);
+    background: #eff6ff;
+}
+
+.report-grid {
+    align-items: start;
 }
 
 .receipt-preview {

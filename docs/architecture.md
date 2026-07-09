@@ -43,7 +43,10 @@ Dependencies flow inward:
   sales, inventory, customer, wallet, loyalty, credit, barcode, reporting, and
   document behavior to service helpers and domain modules. Procurement dashboard
   reads stay separate from supplier, purchase order, receipt, inventory costing,
-  and receiving mutations owned by `app/procurement`.
+  and receiving mutations owned by `app/procurement`. Reports dashboard helpers
+  wrap `app/reports/reporting_service` where possible and add schema-safe
+  dashboard aggregation only for browser composition and placeholder export
+  foundations.
 - `app/barcodes`: normalized identifiers, label rendering/printing, scanner
   lookup, and barcode operational reports.
 - `app/backup`: SQLite snapshots, manifests, verification, atomic restore,

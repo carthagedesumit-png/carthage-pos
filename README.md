@@ -62,7 +62,10 @@ The browser dashboard is available under `/dashboard` when the API app is
 running. The Sales Workspace at `/dashboard/sales`, Inventory Workspace at
 `/dashboard/inventory`, CRM Workspace at `/dashboard/customers`, and Procurement
 Workspace at `/dashboard/procurement` provide read-only management filters,
-pagination, detail pages, and lightweight dashboard JSON endpoints. See
+pagination, detail pages, and lightweight dashboard JSON endpoints. The Reports
+& Analytics Workspace at `/dashboard/reports` surfaces CBOS executive
+intelligence with sales, product, cashier, store, customer, inventory,
+procurement, and refund analytics. See
 [`docs/dashboard.md`](docs/dashboard.md).
 
 Hardware configuration and mock-device testing are documented in

@@ -685,5 +685,157 @@ class DashboardProcurementEmptyDatabaseTestCase(unittest.TestCase):
         self.assertEqual(api_response.json()["pagination"]["total"], 0)
 
 
+class DashboardReportsWorkspaceTestCase(unittest.TestCase):
+    def setUp(self):
+        self.db_file = tempfile.NamedTemporaryFile(delete=False)
+        self.db_file.close()
+        os.environ["CARTHAGE_POS_DB"] = self.db_file.name
+
+        from app.customers.customer_service import create_customer
+        from app.database.db_manager import initialize_database
+        from app.inventory.inventory_service import create_product
+        from app.procurement.purchase_service import create_purchase_order, submit_purchase_order
+        from app.procurement.supplier_service import create_supplier
+        from app.sales.sales_service import PAYMENT_CARD, create_sale, process_return
+        from tests.support import bootstrap_staff
+
+        initialize_database()
+        sessions = bootstrap_staff()
+        self.manager_session = sessions["manager"]
+        self.cashier_session = sessions["cashier"]
+        self.client = TestClient(app)
+        self.customer = create_customer(
+            self.cashier_session,
+            first_name="Report",
+            last_name="Customer",
+            phone_number="+234811100009",
+        )
+        self.supplier = create_supplier(self.manager_session, "Reports Supplier")
+        self.product = create_product(
+            self.manager_session,
+            sku="DASH-REP-ITEM",
+            barcode="DASH-REP-ITEM",
+            name="Dashboard Reports Item",
+            supplier_id=self.supplier["id"],
+            selling_price=40.0,
+            cost_price=15.0,
+            quantity_in_stock=25,
+            reorder_level=5,
+        )
+        self.sale = create_sale(
+            self.cashier_session,
+            [{"product_id": self.product["id"], "quantity": 2}],
+            payment_method=PAYMENT_CARD,
+            customer_id=self.customer["id"],
+        )
+        process_return(
+            self.manager_session,
+            self.sale["sale"]["sale_id"],
+            [{"sale_item_id": self.sale["items"][0]["id"], "quantity": 1}],
+            "Reports refund",
+        )
+        order = create_purchase_order(
+            self.manager_session,
+            self.supplier["id"],
+            "DASH-REPORT-PO",
+            [{"product_id": self.product["id"], "quantity": 4, "unit_cost": 13.0}],
+            expected_delivery_date="2026-12-31",
+        )
+        self.purchase_order = submit_purchase_order(
+            self.manager_session, order["purchase_order"]["id"]
+        )
+
+    def tearDown(self):
+        os.environ.pop("CARTHAGE_POS_DB", None)
+        os.unlink(self.db_file.name)
+
+    def test_reports_workspace_renders_and_preserves_filters(self):
+        response = self.client.get(
+            f"/dashboard/reports?date_from=2026-01-01&date_to=2026-12-31"
+            f"&store_id=1&cashier_id={self.cashier_session.user_id}"
+            f"&customer_id={self.customer['id']}&product_id={self.product['id']}"
+            f"&category_id=1&supplier_id={self.supplier['id']}&report_type=sales"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Reports &amp; Analytics Workspace", response.text)
+        self.assertIn("Sales Summary", response.text)
+        self.assertIn('value="2026-01-01"', response.text)
+        self.assertIn(f'value="{self.customer["id"]}"', response.text)
+        self.assertIn('value="sales" selected', response.text)
+        self.assertIn("CSV Export Coming Soon", response.text)
+
+    def test_reports_api_endpoints_return_json(self):
+        endpoints = [
+            "/dashboard/api/reports/summary",
+            "/dashboard/api/reports/sales",
+            "/dashboard/api/reports/products",
+            "/dashboard/api/reports/cashiers",
+            "/dashboard/api/reports/stores",
+            "/dashboard/api/reports/customers",
+            "/dashboard/api/reports/inventory",
+            "/dashboard/api/reports/procurement",
+            "/dashboard/api/reports/refunds",
+        ]
+        for endpoint in endpoints:
+            with self.subTest(endpoint=endpoint):
+                response = self.client.get(endpoint)
+                self.assertEqual(response.status_code, 200)
+                self.assertIsInstance(response.json(), dict)
+
+        summary = self.client.get("/dashboard/api/reports/summary").json()
+        self.assertIn("sales", summary)
+        self.assertIn("inventory", summary)
+        self.assertIn("procurement", summary)
+        self.assertIn("refunds", summary)
+
+    def test_reports_detail_pages_render(self):
+        for path, marker in [
+            ("/dashboard/reports/sales", "Top Products"),
+            ("/dashboard/reports/inventory", "Inventory Rows"),
+            ("/dashboard/reports/customers", "Customer Rows"),
+            ("/dashboard/reports/procurement", "Purchase Order Rows"),
+            ("/dashboard/reports/stores", "Store Rows"),
+        ]:
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(marker, response.text)
+                self.assertIn("Export Foundation", response.text)
+
+    def test_report_export_placeholder_api(self):
+        response = self.client.get("/dashboard/api/reports/export/csv?report_type=sales")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["status"], "coming_soon")
+        self.assertEqual(data["requested_format"], "csv")
+
+
+class DashboardReportsEmptyDatabaseTestCase(unittest.TestCase):
+    def setUp(self):
+        self.db_file = tempfile.NamedTemporaryFile(delete=False)
+        self.db_file.close()
+        os.environ["CARTHAGE_POS_DB"] = self.db_file.name
+
+        from app.database.db_manager import initialize_database
+
+        initialize_database()
+        self.client = TestClient(app)
+
+    def tearDown(self):
+        os.environ.pop("CARTHAGE_POS_DB", None)
+        os.unlink(self.db_file.name)
+
+    def test_reports_workspace_empty_database_behavior(self):
+        response = self.client.get("/dashboard/reports")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("No product performance activity is available.", response.text)
+
+        api_response = self.client.get("/dashboard/api/reports/summary")
+        self.assertEqual(api_response.status_code, 200)
+        data = api_response.json()
+        self.assertEqual(data["sales"]["summary"]["transaction_count"], 0)
+        self.assertEqual(data["refunds"]["summary"]["refund_count"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

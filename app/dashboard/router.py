@@ -24,6 +24,19 @@ from app.dashboard.services.dashboard_service import (
     list_dashboard_sales,
     list_dashboard_suppliers,
 )
+from app.dashboard.services.report_service import (
+    REPORT_TYPES,
+    get_dashboard_report_cashiers,
+    get_dashboard_report_customers,
+    get_dashboard_report_export_placeholder,
+    get_dashboard_report_inventory,
+    get_dashboard_report_procurement,
+    get_dashboard_report_products,
+    get_dashboard_report_refunds,
+    get_dashboard_report_sales,
+    get_dashboard_report_stores,
+    get_dashboard_reports_summary,
+)
 
 templates = Jinja2Templates(directory="app/dashboard/templates")
 
@@ -414,26 +427,97 @@ def dashboard_supplier_detail(request: Request, supplier_id: int):
     )
 
 
+def report_filter_payload(
+    date_from: str = "",
+    date_to: str = "",
+    store_id: int | None = None,
+    cashier_id: int | None = None,
+    customer_id: int | None = None,
+    product_id: int | None = None,
+    category_id: int | None = None,
+    supplier_id: int | None = None,
+    report_type: str = "overview",
+):
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "store_id": store_id,
+        "cashier_id": cashier_id,
+        "customer_id": customer_id,
+        "product_id": product_id,
+        "category_id": category_id,
+        "supplier_id": supplier_id,
+        "report_type": report_type,
+    }
+
+
 @router.get("/reports", response_class=HTMLResponse)
-def dashboard_reports(request: Request):
-    return render_workspace(
-        request,
-        active_page="reports",
-        page_title="Reports Workspace",
-        page_subtitle="Access business intelligence, analytics, exports, and scheduled reports.",
-        cards=[
-            {"label": "Sales Reports", "value": "Ready"},
-            {"label": "Inventory Reports", "value": "Ready"},
-            {"label": "Customer Reports", "value": "Ready"},
-        ],
-        main_panel_title="Analytics Center",
-        main_panel_text="Sales trends, profit analytics, store comparisons, inventory valuation and export tools will live here.",
-        steps=[
-            {"title": "Charts", "text": "Add interactive reporting charts."},
-            {"title": "Exports", "text": "Add CSV/Excel/PDF export actions."},
-            {"title": "Scheduled reports", "text": "Add schedule foundation."},
-        ],
+def dashboard_reports(
+    request: Request,
+    date_from: str = "",
+    date_to: str = "",
+    store_id: int | None = Query(default=None),
+    cashier_id: int | None = Query(default=None),
+    customer_id: int | None = Query(default=None),
+    product_id: int | None = Query(default=None),
+    category_id: int | None = Query(default=None),
+    supplier_id: int | None = Query(default=None),
+    report_type: str = "overview",
+):
+    result = get_dashboard_reports_summary(
+        report_filter_payload(
+            date_from, date_to, store_id, cashier_id, customer_id,
+            product_id, category_id, supplier_id, report_type,
+        )
     )
+    return templates.TemplateResponse(
+        "reports.html",
+        {
+            "request": request,
+            "title": "Reports Workspace - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "reports",
+            "page_title": "Reports & Analytics Workspace",
+            "page_subtitle": "Executive intelligence across sales, profit, inventory, customers, stores, procurement, and refunds.",
+            "report": result,
+            "filters": result["filters"],
+            "report_types": REPORT_TYPES,
+        },
+    )
+
+
+@router.get("/reports/sales", response_class=HTMLResponse)
+def dashboard_reports_sales(request: Request, date_from: str = "", date_to: str = "", store_id: int | None = Query(default=None), cashier_id: int | None = Query(default=None), customer_id: int | None = Query(default=None)):
+    filters = report_filter_payload(date_from, date_to, store_id, cashier_id, customer_id, None, None, None, "sales")
+    return templates.TemplateResponse("report_detail.html", {"request": request, "title": "Sales Reports - Carthage Business Operating System", "header": get_header(), "active_page": "reports", "section": "sales", "page_title": "Sales Reports", "page_subtitle": "Sales, refunds, discounts, profit, average transaction value, and top product trends.", "filters": get_dashboard_report_sales(filters)["filters"], "report": get_dashboard_report_sales(filters), "report_types": REPORT_TYPES})
+
+
+@router.get("/reports/inventory", response_class=HTMLResponse)
+def dashboard_reports_inventory(request: Request, store_id: int | None = Query(default=None), product_id: int | None = Query(default=None), category_id: int | None = Query(default=None), supplier_id: int | None = Query(default=None)):
+    filters = report_filter_payload("", "", store_id, None, None, product_id, category_id, supplier_id, "inventory")
+    report = get_dashboard_report_inventory(filters)
+    return templates.TemplateResponse("report_detail.html", {"request": request, "title": "Inventory Reports - Carthage Business Operating System", "header": get_header(), "active_page": "reports", "section": "inventory", "page_title": "Inventory Reports", "page_subtitle": "Inventory valuation, low-stock analytics, category value, and product stock exposure.", "filters": report["filters"], "report": report, "report_types": REPORT_TYPES})
+
+
+@router.get("/reports/customers", response_class=HTMLResponse)
+def dashboard_reports_customers(request: Request, date_from: str = "", date_to: str = "", store_id: int | None = Query(default=None), customer_id: int | None = Query(default=None)):
+    filters = report_filter_payload(date_from, date_to, store_id, None, customer_id, None, None, None, "customers")
+    report = get_dashboard_report_customers(filters)
+    return templates.TemplateResponse("report_detail.html", {"request": request, "title": "Customer Reports - Carthage Business Operating System", "header": get_header(), "active_page": "reports", "section": "customers", "page_title": "Customer Reports", "page_subtitle": "Customer value, credit exposure, wallet balances, loyalty, and purchase concentration.", "filters": report["filters"], "report": report, "report_types": REPORT_TYPES})
+
+
+@router.get("/reports/procurement", response_class=HTMLResponse)
+def dashboard_reports_procurement(request: Request, date_from: str = "", date_to: str = "", store_id: int | None = Query(default=None), supplier_id: int | None = Query(default=None)):
+    filters = report_filter_payload(date_from, date_to, store_id, None, None, None, None, supplier_id, "procurement")
+    report = get_dashboard_report_procurement(filters)
+    return templates.TemplateResponse("report_detail.html", {"request": request, "title": "Procurement Reports - Carthage Business Operating System", "header": get_header(), "active_page": "reports", "section": "procurement", "page_title": "Procurement Reports", "page_subtitle": "Purchase order value, supplier activity, receiving progress, and open replenishment.", "filters": report["filters"], "report": report, "report_types": REPORT_TYPES})
+
+
+@router.get("/reports/stores", response_class=HTMLResponse)
+def dashboard_reports_stores(request: Request, store_id: int | None = Query(default=None)):
+    filters = report_filter_payload("", "", store_id, None, None, None, None, None, "stores")
+    report = get_dashboard_report_stores(filters)
+    return templates.TemplateResponse("report_detail.html", {"request": request, "title": "Store Reports - Carthage Business Operating System", "header": get_header(), "active_page": "reports", "section": "stores", "page_title": "Store Reports", "page_subtitle": "Branch comparison across sales, refunds, transactions, and inventory value.", "filters": report["filters"], "report": report, "report_types": REPORT_TYPES})
 
 
 @router.get("/system", response_class=HTMLResponse)
@@ -803,6 +887,90 @@ def dashboard_procurement_purchase_order_api(purchase_order_id: int):
             "actions": [],
         }
     return detail
+
+
+@router.get("/api/reports/summary")
+def dashboard_reports_summary_api(
+    date_from: str = "",
+    date_to: str = "",
+    store_id: int | None = Query(default=None),
+    cashier_id: int | None = Query(default=None),
+    customer_id: int | None = Query(default=None),
+    product_id: int | None = Query(default=None),
+    category_id: int | None = Query(default=None),
+    supplier_id: int | None = Query(default=None),
+    report_type: str = "overview",
+):
+    return get_dashboard_reports_summary(
+        report_filter_payload(
+            date_from, date_to, store_id, cashier_id, customer_id,
+            product_id, category_id, supplier_id, report_type,
+        )
+    )
+
+
+@router.get("/api/reports/sales")
+def dashboard_reports_sales_api(date_from: str = "", date_to: str = "", store_id: int | None = Query(default=None), cashier_id: int | None = Query(default=None), customer_id: int | None = Query(default=None)):
+    return get_dashboard_report_sales(
+        report_filter_payload(date_from, date_to, store_id, cashier_id, customer_id, None, None, None, "sales")
+    )
+
+
+@router.get("/api/reports/products")
+def dashboard_reports_products_api(store_id: int | None = Query(default=None), product_id: int | None = Query(default=None), category_id: int | None = Query(default=None), supplier_id: int | None = Query(default=None)):
+    return get_dashboard_report_products(
+        report_filter_payload("", "", store_id, None, None, product_id, category_id, supplier_id, "products")
+    )
+
+
+@router.get("/api/reports/cashiers")
+def dashboard_reports_cashiers_api(store_id: int | None = Query(default=None), cashier_id: int | None = Query(default=None)):
+    return get_dashboard_report_cashiers(
+        report_filter_payload("", "", store_id, cashier_id, None, None, None, None, "cashiers")
+    )
+
+
+@router.get("/api/reports/stores")
+def dashboard_reports_stores_api(store_id: int | None = Query(default=None)):
+    return get_dashboard_report_stores(
+        report_filter_payload("", "", store_id, None, None, None, None, None, "stores")
+    )
+
+
+@router.get("/api/reports/customers")
+def dashboard_reports_customers_api(date_from: str = "", date_to: str = "", store_id: int | None = Query(default=None), customer_id: int | None = Query(default=None)):
+    return get_dashboard_report_customers(
+        report_filter_payload(date_from, date_to, store_id, None, customer_id, None, None, None, "customers")
+    )
+
+
+@router.get("/api/reports/inventory")
+def dashboard_reports_inventory_api(store_id: int | None = Query(default=None), product_id: int | None = Query(default=None), category_id: int | None = Query(default=None), supplier_id: int | None = Query(default=None)):
+    return get_dashboard_report_inventory(
+        report_filter_payload("", "", store_id, None, None, product_id, category_id, supplier_id, "inventory")
+    )
+
+
+@router.get("/api/reports/procurement")
+def dashboard_reports_procurement_api(date_from: str = "", date_to: str = "", store_id: int | None = Query(default=None), supplier_id: int | None = Query(default=None)):
+    return get_dashboard_report_procurement(
+        report_filter_payload(date_from, date_to, store_id, None, None, None, None, supplier_id, "procurement")
+    )
+
+
+@router.get("/api/reports/refunds")
+def dashboard_reports_refunds_api(date_from: str = "", date_to: str = "", store_id: int | None = Query(default=None), cashier_id: int | None = Query(default=None), customer_id: int | None = Query(default=None)):
+    return get_dashboard_report_refunds(
+        report_filter_payload(date_from, date_to, store_id, cashier_id, customer_id, None, None, None, "refunds")
+    )
+
+
+@router.get("/api/reports/export/{export_format}")
+def dashboard_reports_export_api(export_format: str, date_from: str = "", date_to: str = "", store_id: int | None = Query(default=None), report_type: str = "overview"):
+    return get_dashboard_report_export_placeholder(
+        report_filter_payload(date_from, date_to, store_id, None, None, None, None, None, report_type),
+        export_format=export_format,
+    )
 
 
 @router.get("/health")
