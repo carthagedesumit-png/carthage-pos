@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{% if not detail %}
+<section class="hero">
+    <div>
+        <h1>Customer Not Found</h1>
+        <p>No customer record is available for ID {{ customer_id }}.</p>
+        <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <a class="hero-link" href="/dashboard/customers">Back to CRM</a>
+    </div>
+</section>
+{% else %}
+<section class="hero">
+    <div>
+        <h1>{{ detail.customer.name }}</h1>
+        <p>{{ detail.customer.customer_code }} &middot; {{ detail.customer.group }} &middot; {{ detail.customer.active_status.title() }}</p>
+        <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <span class="status success">{{ detail.customer.lifetime_value_display }} lifetime</span>
+        <span class="status warning">{{ detail.customer.outstanding_credit_display }} credit</span>
+        <a class="hero-link" href="/dashboard/customers">Back to CRM</a>
+    </div>
+</section>
+
+<section class="cards">
+    <div class="card accent-blue">
+        <span>Lifetime Value</span>
+        <strong>{{ detail.customer.lifetime_value_display }}</strong>
+    </div>
+    <div class="card accent-green">
+        <span>Wallet</span>
+        <strong>{{ detail.customer.wallet_balance_display }}</strong>
+    </div>
+    <div class="card accent-amber">
+        <span>Loyalty Points</span>
+        <strong>{{ detail.customer.loyalty_points }}</strong>
+    </div>
+    <div class="card accent-red">
+        <span>Outstanding Credit</span>
+        <strong>{{ detail.customer.outstanding_credit_display }}</strong>
+    </div>
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>Customer Profile</h2>
+        <div class="detail-list">
+            <span>Code <strong>{{ detail.customer.customer_code }}</strong></span>
+            <span>Name <strong>{{ detail.customer.name }}</strong></span>
+            <span>Group <strong>{{ detail.customer.group }}</strong></span>
+            <span>Joined <strong>{{ detail.profile.created_at or "Unknown" }}</strong></span>
+            <span>Notes <strong>{{ detail.profile.notes or "No notes" }}</strong></span>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Contact</h2>
+        <div class="detail-list">
+            <span>Phone <strong>{{ detail.customer.phone or "No phone" }}</strong></span>
+            <span>Email <strong>{{ detail.customer.email or "No email" }}</strong></span>
+            <span>Address <strong>{{ detail.profile.address or "No address" }}</strong></span>
+            <span>City <strong>{{ detail.profile.city or "No city" }}</strong></span>
+        </div>
+    </div>
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>Recent Sales</h2>
+        {% if detail.activity.recent_sales %}
+        <div class="table-scroll">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Receipt</th>
+                        <th>Date</th>
+                        <th>Payment</th>
+                        <th>Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sale in detail.activity.recent_sales %}
+                    <tr>
+                        <td>{{ sale.receipt_number }}</td>
+                        <td>{{ sale.sale_time }}</td>
+                        <td>{{ sale.payment_method }}</td>
+                        <td>{{ sale.total_amount }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="empty-state">No sales are recorded for this customer.</p>
+        {% endif %}
+    </div>
+
+    <div class="panel">
+        <h2>Statement Actions</h2>
+        <div class="quick-actions label-actions">
+            {% for action in detail.actions %}
+            <a class="disabled-action" href="#">{{ action.label }}</a>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>Wallet History</h2>
+        {% if detail.activity.wallet %}
+        <div class="detail-list">
+            {% for item in detail.activity.wallet %}
+            <span>{{ item.transaction_type }} {{ item.created_at }} <strong>{{ item.amount_delta }}</strong></span>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No wallet activity is available.</p>
+        {% endif %}
+    </div>
+
+    <div class="panel">
+        <h2>Loyalty History</h2>
+        {% if detail.activity.loyalty %}
+        <div class="detail-list">
+            {% for item in detail.activity.loyalty %}
+            <span>{{ item.transaction_type }} {{ item.created_at }} <strong>{{ item.amount_delta }}</strong></span>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No loyalty activity is available.</p>
+        {% endif %}
+    </div>
+</section>
+
+<section class="panel">
+    <h2>Credit History</h2>
+    {% if detail.activity.credit %}
+    <div class="detail-list">
+        {% for item in detail.activity.credit %}
+        <span>{{ item.transaction_type }} {{ item.created_at }} <strong>{{ item.amount_delta }}</strong></span>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">No credit activity is available.</p>
+    {% endif %}
+</section>
+{% endif %}
+
+{% endblock %}

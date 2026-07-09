@@ -1,7 +1,7 @@
 # carthage-pos
 
-Carthage Business Operating System with an enterprise-grade supermarket POS
-module for inventory management and sales tracking.
+Carthage Business Operating System (CBOS) with an enterprise-grade supermarket
+POS module for inventory management and sales tracking.
 
 ## Features
 
@@ -59,9 +59,10 @@ Open `http://127.0.0.1:8000/docs` for the interactive API reference. See
 the error contract.
 
 The browser dashboard is available under `/dashboard` when the API app is
-running. The Sales Workspace at `/dashboard/sales` and Inventory Workspace at
-`/dashboard/inventory` provide read-only management filters, pagination, detail
-pages, and lightweight dashboard JSON endpoints. See
+running. The Sales Workspace at `/dashboard/sales`, Inventory Workspace at
+`/dashboard/inventory`, and CRM Workspace at `/dashboard/customers` provide
+read-only management filters, pagination, detail pages, and lightweight
+dashboard JSON endpoints. See
 [`docs/dashboard.md`](docs/dashboard.md).
 
 Hardware configuration and mock-device testing are documented in

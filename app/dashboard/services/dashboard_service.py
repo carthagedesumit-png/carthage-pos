@@ -923,6 +923,379 @@ def get_dashboard_product_detail(product_id, session=None):
     }
 
 
+def _normalize_crm_filters(filters=None):
+    filters = filters or {}
+    status = _safe_text(filters.get("status") or filters.get("active")).lower()
+    if status not in {"active", "inactive", "all"}:
+        status = "active"
+    group_value = filters.get("customer_group")
+    if group_value in (None, ""):
+        group_value = filters.get("group_id")
+    return {
+        "search": _safe_text(filters.get("search") or filters.get("q")),
+        "customer_group": _safe_text(group_value),
+        "active": status,
+        "has_credit": str(filters.get("has_credit") or "").lower() in {"1", "true", "yes", "on"},
+        "has_wallet_balance": str(filters.get("has_wallet_balance") or "").lower() in {"1", "true", "yes", "on"},
+        "loyalty_customer": str(filters.get("loyalty_customer") or "").lower() in {"1", "true", "yes", "on"},
+        "joined_from": _safe_text(filters.get("joined_from") or filters.get("date_from")),
+        "joined_to": _safe_text(filters.get("joined_to") or filters.get("date_to")),
+        "page": _safe_int(filters.get("page"), default=1, minimum=1),
+        "page_size": _safe_int(filters.get("page_size"), default=25, minimum=1, maximum=100),
+    }
+
+
+def _customer_display_name(row):
+    business = _safe_text(_row_value(row, "business_name"))
+    first = _safe_text(_row_value(row, "first_name"))
+    last = _safe_text(_row_value(row, "last_name"))
+    name = business or " ".join(part for part in [first, last] if part)
+    return name or _safe_text(_row_value(row, "customer_code")) or f"Customer #{_row_value(row, 'id', '')}"
+
+
+def _ledger_sum_expr(table_name, amount_column):
+    return (
+        f"(SELECT COALESCE(SUM({amount_column}), 0) FROM {table_name} "
+        f"WHERE {table_name}.customer_id = c.id)"
+    )
+
+
+def _crm_sales_stats_exprs(has_sales, sales_columns):
+    if not has_sales or "customer_id" not in sales_columns:
+        return {
+            "purchase_count": "0",
+            "lifetime_value": "0",
+            "last_purchase_date": "NULL",
+        }
+    total_expr = "s.total_amount" if "total_amount" in sales_columns else "s.total"
+    date_expr = "s.created_at" if "created_at" in sales_columns else "s.timestamp"
+    return {
+        "purchase_count": "(SELECT COUNT(*) FROM sales s WHERE s.customer_id = c.id)",
+        "lifetime_value": f"(SELECT COALESCE(SUM({total_expr}), 0) FROM sales s WHERE s.customer_id = c.id)",
+        "last_purchase_date": f"(SELECT MAX({date_expr}) FROM sales s WHERE s.customer_id = c.id)",
+    }
+
+
+def _crm_query_parts(conn, filters, session=None):
+    customer_columns = _columns(conn, "customers")
+    group_columns = _columns(conn, "customer_groups")
+    sales_columns = _columns(conn, "sales")
+    has_groups = bool(group_columns) and "group_id" in customer_columns
+    has_sales = _table_exists(conn, "sales")
+    has_wallet = _table_exists(conn, "wallet_transactions")
+    has_loyalty = _table_exists(conn, "loyalty_transactions")
+    has_credit = _table_exists(conn, "credit_transactions")
+
+    wallet_expr = _ledger_sum_expr("wallet_transactions", "amount_delta") if has_wallet else "0"
+    loyalty_expr = _ledger_sum_expr("loyalty_transactions", "points_delta") if has_loyalty else "0"
+    credit_expr = _ledger_sum_expr("credit_transactions", "amount_delta") if has_credit else "0"
+    sales_exprs = _crm_sales_stats_exprs(has_sales, sales_columns)
+
+    select_fields = [
+        "c.id",
+        "c.customer_code" if "customer_code" in customer_columns else "CAST(c.id AS TEXT) AS customer_code",
+        "c.first_name" if "first_name" in customer_columns else "'' AS first_name",
+        "c.last_name" if "last_name" in customer_columns else "'' AS last_name",
+        "c.business_name" if "business_name" in customer_columns else "NULL AS business_name",
+        "c.phone_number" if "phone_number" in customer_columns else "NULL AS phone_number",
+        "c.email" if "email" in customer_columns else "NULL AS email",
+        "c.created_at" if "created_at" in customer_columns else "NULL AS created_at",
+        "COALESCE(c.is_active, 1) AS is_active" if "is_active" in customer_columns else "1 AS is_active",
+        "c.group_id" if "group_id" in customer_columns else "NULL AS group_id",
+        "COALESCE(c.credit_limit, 0) AS credit_limit" if "credit_limit" in customer_columns else "0 AS credit_limit",
+        f"{wallet_expr} AS wallet_balance",
+        f"{loyalty_expr} AS loyalty_points",
+        f"{credit_expr} AS outstanding_credit",
+        f"{sales_exprs['purchase_count']} AS purchase_count",
+        f"{sales_exprs['lifetime_value']} AS lifetime_value",
+        f"{sales_exprs['last_purchase_date']} AS last_purchase_date",
+    ]
+    joins = []
+    if has_groups:
+        joins.append("LEFT JOIN customer_groups cg ON cg.id = c.group_id")
+        select_fields.append("COALESCE(cg.name, 'Retail') AS group_name")
+    else:
+        select_fields.append("'Retail' AS group_name")
+
+    where = ["1 = 1"]
+    params = []
+    if filters["active"] == "active" and "is_active" in customer_columns:
+        where.append("COALESCE(c.is_active, 1) = 1")
+    elif filters["active"] == "inactive" and "is_active" in customer_columns:
+        where.append("COALESCE(c.is_active, 1) = 0")
+    if filters["customer_group"] and has_groups:
+        group_id = _safe_int(filters["customer_group"])
+        if group_id is not None:
+            where.append("c.group_id = ?")
+            params.append(group_id)
+        else:
+            where.append("cg.name LIKE ?")
+            params.append(f"%{filters['customer_group']}%")
+    if filters["joined_from"] and "created_at" in customer_columns:
+        where.append("DATE(c.created_at) >= DATE(?)")
+        params.append(filters["joined_from"])
+    if filters["joined_to"] and "created_at" in customer_columns:
+        where.append("DATE(c.created_at) <= DATE(?)")
+        params.append(filters["joined_to"])
+    if filters["has_credit"]:
+        where.append(f"({credit_expr}) > 0")
+    if filters["has_wallet_balance"]:
+        where.append(f"({wallet_expr}) > 0")
+    if filters["loyalty_customer"]:
+        where.append(f"({loyalty_expr}) > 0")
+    if filters["search"]:
+        pattern = f"%{filters['search']}%"
+        search_terms = []
+        for column in ["customer_code", "first_name", "last_name", "business_name", "phone_number", "email"]:
+            if column in customer_columns:
+                search_terms.append(f"c.{column} LIKE ?")
+                params.append(pattern)
+        if search_terms:
+            where.append(f"({' OR '.join(search_terms)})")
+
+    return {
+        "select": ", ".join(select_fields),
+        "from": "customers c",
+        "joins": "\n".join(joins),
+        "where": " AND ".join(where),
+        "params": params,
+        "wallet_expr": wallet_expr,
+        "loyalty_expr": loyalty_expr,
+        "credit_expr": credit_expr,
+        "purchase_count_expr": sales_exprs["purchase_count"],
+        "lifetime_value_expr": sales_exprs["lifetime_value"],
+    }
+
+
+def _format_crm_row(row):
+    wallet = float(row["wallet_balance"] or 0)
+    credit = float(row["outstanding_credit"] or 0)
+    lifetime_value = float(row["lifetime_value"] or 0)
+    loyalty = int(row["loyalty_points"] or 0)
+    return {
+        "customer_id": row["id"],
+        "customer_code": row["customer_code"] or f"Customer #{row['id']}",
+        "name": _customer_display_name(row),
+        "phone": row["phone_number"] or "",
+        "email": row["email"] or "",
+        "group": row["group_name"] or "Retail",
+        "wallet_balance": wallet,
+        "wallet_balance_display": money(wallet),
+        "loyalty_points": loyalty,
+        "outstanding_credit": credit,
+        "outstanding_credit_display": money(credit),
+        "lifetime_value": lifetime_value,
+        "lifetime_value_display": money(lifetime_value),
+        "last_purchase_date": row["last_purchase_date"] or "",
+        "purchase_count": int(row["purchase_count"] or 0),
+        "is_active": bool(row["is_active"]),
+        "active_status": "active" if row["is_active"] else "inactive",
+        "credit_status": "credit due" if credit > 0 else "clear",
+        "loyalty_status": "loyalty" if loyalty > 0 else "standard",
+    }
+
+
+def _empty_crm_summary():
+    return {
+        "customer_count": 0,
+        "active_customers": 0,
+        "wallet_balance": 0,
+        "wallet_balance_display": money(0),
+        "loyalty_points": 0,
+        "outstanding_credit": 0,
+        "outstanding_credit_display": money(0),
+        "lifetime_value": 0,
+        "lifetime_value_display": money(0),
+    }
+
+
+def _dashboard_crm_summary_from_parts(conn, parts):
+    row = conn.execute(
+        f"""SELECT COUNT(*) AS customer_count,
+                   COALESCE(SUM(CASE WHEN COALESCE(c.is_active, 1) = 1 THEN 1 ELSE 0 END), 0) AS active_customers,
+                   COALESCE(SUM({parts['wallet_expr']}), 0) AS wallet_balance,
+                   COALESCE(SUM({parts['loyalty_expr']}), 0) AS loyalty_points,
+                   COALESCE(SUM({parts['credit_expr']}), 0) AS outstanding_credit,
+                   COALESCE(SUM({parts['lifetime_value_expr']}), 0) AS lifetime_value
+            FROM {parts['from']}
+            {parts['joins']}
+            WHERE {parts['where']}""",
+        parts["params"],
+    ).fetchone()
+    wallet = float(row["wallet_balance"] or 0)
+    credit = float(row["outstanding_credit"] or 0)
+    lifetime_value = float(row["lifetime_value"] or 0)
+    return {
+        "customer_count": int(row["customer_count"] or 0),
+        "active_customers": int(row["active_customers"] or 0),
+        "wallet_balance": wallet,
+        "wallet_balance_display": money(wallet),
+        "loyalty_points": int(row["loyalty_points"] or 0),
+        "outstanding_credit": credit,
+        "outstanding_credit_display": money(credit),
+        "lifetime_value": lifetime_value,
+        "lifetime_value_display": money(lifetime_value),
+    }
+
+
+def get_dashboard_crm_summary(filters=None, session=None):
+    filters = _normalize_crm_filters(filters)
+    with get_connection() as conn:
+        if not _table_exists(conn, "customers"):
+            return _empty_crm_summary()
+        parts = _crm_query_parts(conn, filters, session=session)
+        return _dashboard_crm_summary_from_parts(conn, parts)
+
+
+def list_dashboard_customers(filters=None, session=None):
+    filters = _normalize_crm_filters(filters)
+    if filters["joined_from"] and filters["joined_to"] and filters["joined_from"] > filters["joined_to"]:
+        filters["joined_from"], filters["joined_to"] = filters["joined_to"], filters["joined_from"]
+    with get_connection() as conn:
+        if not _table_exists(conn, "customers"):
+            total = 0
+            rows = []
+            summary = _empty_crm_summary()
+        else:
+            parts = _crm_query_parts(conn, filters, session=session)
+            total = conn.execute(
+                f"""SELECT COUNT(*)
+                    FROM {parts['from']}
+                    {parts['joins']}
+                    WHERE {parts['where']}""",
+                parts["params"],
+            ).fetchone()[0]
+            total_pages = max(1, ceil(total / filters["page_size"]))
+            filters["page"] = min(filters["page"], total_pages)
+            offset = (filters["page"] - 1) * filters["page_size"]
+            rows = conn.execute(
+                f"""SELECT {parts['select']}
+                    FROM {parts['from']}
+                    {parts['joins']}
+                    WHERE {parts['where']}
+                    ORDER BY lifetime_value DESC, last_purchase_date DESC, c.first_name COLLATE NOCASE, c.last_name COLLATE NOCASE
+                    LIMIT ? OFFSET ?""",
+                [*parts["params"], filters["page_size"], offset],
+            ).fetchall()
+            summary = _dashboard_crm_summary_from_parts(conn, parts)
+
+    total_pages = max(1, ceil(total / filters["page_size"]))
+    page = filters["page"]
+    return {
+        "items": [_format_crm_row(row) for row in rows],
+        "summary": summary,
+        "filters": filters,
+        "pagination": {
+            "page": page,
+            "page_size": filters["page_size"],
+            "total": total,
+            "total_pages": total_pages,
+            "has_previous": page > 1,
+            "has_next": page < total_pages,
+            "previous_page": page - 1 if page > 1 else None,
+            "next_page": page + 1 if page < total_pages else None,
+        },
+    }
+
+
+def get_dashboard_top_customers(limit=10, session=None):
+    result = list_dashboard_customers(
+        {"active": "all", "page": 1, "page_size": limit},
+        session=session,
+    )
+    return result["items"]
+
+
+def _ledger_activity(conn, table_name, amount_column, customer_id, limit=25):
+    if not _table_exists(conn, table_name):
+        return []
+    return [
+        dict(row)
+        for row in conn.execute(
+            f"""SELECT id, transaction_type, {amount_column} AS amount_delta,
+                      balance_after, sale_id, sales_return_id, store_id, notes, created_at
+                FROM {table_name}
+                WHERE customer_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?""",
+            (customer_id, limit),
+        ).fetchall()
+    ]
+
+
+def get_dashboard_customer_activity(customer_id, session=None):
+    try:
+        customer_id = int(customer_id)
+    except (TypeError, ValueError):
+        return None
+    with get_connection() as conn:
+        if not _table_exists(conn, "customers"):
+            return None
+        if not conn.execute("SELECT 1 FROM customers WHERE id = ?", (customer_id,)).fetchone():
+            return None
+        sales = []
+        if _table_exists(conn, "sales") and "customer_id" in _columns(conn, "sales"):
+            sales_columns = _columns(conn, "sales")
+            total_expr = "total_amount" if "total_amount" in sales_columns else "total"
+            date_expr = "created_at" if "created_at" in sales_columns else "timestamp"
+            receipt_expr = "receipt_number" if "receipt_number" in sales_columns else "sale_id"
+            sales = [
+                dict(row)
+                for row in conn.execute(
+                    f"""SELECT sale_id, {receipt_expr} AS receipt_number,
+                              {date_expr} AS sale_time, {total_expr} AS total_amount,
+                              payment_method
+                       FROM sales
+                       WHERE customer_id = ?
+                       ORDER BY {date_expr} DESC, sale_id DESC
+                       LIMIT 25""",
+                    (customer_id,),
+                ).fetchall()
+            ]
+        return {
+            "recent_sales": sales,
+            "wallet": _ledger_activity(conn, "wallet_transactions", "amount_delta", customer_id),
+            "loyalty": _ledger_activity(conn, "loyalty_transactions", "points_delta", customer_id),
+            "credit": _ledger_activity(conn, "credit_transactions", "amount_delta", customer_id),
+        }
+
+
+def get_dashboard_customer_detail(customer_id, session=None):
+    try:
+        customer_id = int(customer_id)
+    except (TypeError, ValueError):
+        return None
+    with get_connection() as conn:
+        if not _table_exists(conn, "customers"):
+            return None
+        filters = {"active": "all", "page": 1, "page_size": 1}
+        parts = _crm_query_parts(conn, _normalize_crm_filters(filters), session=session)
+        row = conn.execute(
+            f"""SELECT {parts['select']}
+                FROM {parts['from']}
+                {parts['joins']}
+                WHERE c.id = ?""",
+            (customer_id,),
+        ).fetchone()
+        if not row:
+            return None
+        customer = _format_crm_row(row)
+        raw = dict(row)
+        for field in ["address", "city", "state", "country", "date_of_birth", "gender", "tax_number", "notes", "created_at"]:
+            raw[field] = _row_value(row, field)
+        activity = get_dashboard_customer_activity(customer_id, session=session)
+    return {
+        "customer": customer,
+        "profile": raw,
+        "activity": activity or {"recent_sales": [], "wallet": [], "loyalty": [], "credit": []},
+        "actions": [
+            {"label": "Statement", "enabled": False},
+            {"label": "Print", "enabled": False},
+            {"label": "Export", "enabled": False},
+        ],
+    }
+
+
 def get_dashboard_summary():
     today = date.today().isoformat()
 

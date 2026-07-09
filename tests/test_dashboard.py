@@ -310,5 +310,179 @@ class DashboardInventoryEmptyDatabaseTestCase(unittest.TestCase):
         self.assertEqual(api_response.json()["pagination"]["total"], 0)
 
 
+class DashboardCrmWorkspaceTestCase(unittest.TestCase):
+    def setUp(self):
+        self.db_file = tempfile.NamedTemporaryFile(delete=False)
+        self.db_file.close()
+        os.environ["CARTHAGE_POS_DB"] = self.db_file.name
+
+        from app.customers.credit_service import set_credit_terms
+        from app.customers.customer_service import create_customer, create_customer_group, deactivate_customer
+        from app.customers.wallet_service import deposit_wallet
+        from app.database.db_manager import initialize_database
+        from app.inventory.inventory_service import create_product
+        from app.sales.sales_service import PAYMENT_CASH, PAYMENT_CREDIT, create_sale
+        from tests.support import bootstrap_staff
+
+        initialize_database()
+        sessions = bootstrap_staff()
+        self.manager_session = sessions["manager"]
+        self.cashier_session = sessions["cashier"]
+        self.client = TestClient(app)
+        self.product = create_product(
+            self.manager_session,
+            sku="DASH-CRM-ITEM",
+            barcode="DASH-CRM-ITEM",
+            name="Dashboard CRM Item",
+            selling_price=20.0,
+            cost_price=8.0,
+            quantity_in_stock=100,
+            reorder_level=5,
+        )
+        self.vip_group = create_customer_group(
+            self.manager_session,
+            "Dashboard VIP",
+            default_discount=0,
+            pricing_priority=50,
+        )
+        self.customer = create_customer(
+            self.cashier_session,
+            first_name="Nia",
+            last_name="Okafor",
+            phone_number="+234811000001",
+            email="nia@example.com",
+            group_id=self.vip_group["id"],
+            city="Lagos",
+        )
+        deposit_wallet(self.manager_session, self.customer["id"], 50)
+        create_sale(
+            self.cashier_session,
+            [{"product_id": self.product["id"], "quantity": 1}],
+            payment_method=PAYMENT_CASH,
+            amount_paid=20,
+            customer_id=self.customer["id"],
+        )
+        set_credit_terms(self.manager_session, self.customer["id"], 100, "2026-12-31")
+        create_sale(
+            self.cashier_session,
+            [{"product_id": self.product["id"], "quantity": 1}],
+            payment_method=PAYMENT_CREDIT,
+            customer_id=self.customer["id"],
+        )
+        self.other_customer = create_customer(
+            self.cashier_session,
+            first_name="Tunde",
+            last_name="Bello",
+            phone_number="+234811000002",
+            email="tunde@example.com",
+        )
+        self.inactive_customer = create_customer(
+            self.cashier_session,
+            first_name="Mina",
+            last_name="Stone",
+            phone_number="+234811000003",
+            email="mina@example.com",
+        )
+        deactivate_customer(self.manager_session, self.inactive_customer["id"])
+
+    def tearDown(self):
+        os.environ.pop("CARTHAGE_POS_DB", None)
+        os.unlink(self.db_file.name)
+
+    def test_crm_workspace_renders_and_preserves_filters(self):
+        response = self.client.get(
+            "/dashboard/customers?search=Nia&customer_group=Dashboard&active=all"
+            "&has_credit=true&has_wallet_balance=true&loyalty_customer=true&page_size=10"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("CRM Workspace", response.text)
+        self.assertIn("Nia Okafor", response.text)
+        self.assertIn('value="Nia"', response.text)
+        self.assertIn('value="Dashboard"', response.text)
+        self.assertIn('value="all" selected', response.text)
+        self.assertIn("checked", response.text)
+
+    def test_crm_workspace_pagination(self):
+        response = self.client.get("/dashboard/customers?active=all&page_size=1")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Page 1 of 3", response.text)
+        self.assertIn("Next", response.text)
+
+    def test_crm_api_returns_json(self):
+        response = self.client.get("/dashboard/api/customers?search=Nia&page_size=1")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("items", data)
+        self.assertIn("summary", data)
+        self.assertIn("pagination", data)
+        self.assertEqual(data["items"][0]["customer_id"], self.customer["id"])
+
+    def test_crm_summary_and_top_endpoints_return_json(self):
+        summary_response = self.client.get("/dashboard/api/customers/summary?active=all")
+        self.assertEqual(summary_response.status_code, 200)
+        summary = summary_response.json()
+        self.assertEqual(summary["customer_count"], 3)
+        self.assertGreaterEqual(summary["lifetime_value"], 40.0)
+
+        top_response = self.client.get("/dashboard/api/customers/top?limit=2")
+        self.assertEqual(top_response.status_code, 200)
+        top = top_response.json()
+        self.assertIsInstance(top, list)
+        self.assertEqual(top[0]["customer_id"], self.customer["id"])
+
+    def test_customer_detail_and_activity_handle_existing_customer(self):
+        response = self.client.get(f"/dashboard/customers/{self.customer['id']}")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Nia Okafor", response.text)
+        self.assertIn("Wallet History", response.text)
+        self.assertIn("Recent Sales", response.text)
+
+        detail_response = self.client.get(f"/dashboard/api/customers/{self.customer['id']}")
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.json()["customer"]["customer_id"], self.customer["id"])
+
+        activity_response = self.client.get(f"/dashboard/api/customers/{self.customer['id']}/activity")
+        self.assertEqual(activity_response.status_code, 200)
+        activity = activity_response.json()
+        self.assertGreaterEqual(len(activity["recent_sales"]), 2)
+        self.assertGreaterEqual(len(activity["wallet"]), 1)
+        self.assertGreaterEqual(len(activity["loyalty"]), 1)
+        self.assertGreaterEqual(len(activity["credit"]), 1)
+
+    def test_customer_detail_handles_missing_customer_safely(self):
+        page_response = self.client.get("/dashboard/customers/999999")
+        self.assertEqual(page_response.status_code, 404)
+        self.assertIn("Customer Not Found", page_response.text)
+
+        api_response = self.client.get("/dashboard/api/customers/999999")
+        self.assertEqual(api_response.status_code, 200)
+        self.assertIsNone(api_response.json()["customer"])
+
+
+class DashboardCrmEmptyDatabaseTestCase(unittest.TestCase):
+    def setUp(self):
+        self.db_file = tempfile.NamedTemporaryFile(delete=False)
+        self.db_file.close()
+        os.environ["CARTHAGE_POS_DB"] = self.db_file.name
+
+        from app.database.db_manager import initialize_database
+
+        initialize_database()
+        self.client = TestClient(app)
+
+    def tearDown(self):
+        os.environ.pop("CARTHAGE_POS_DB", None)
+        os.unlink(self.db_file.name)
+
+    def test_crm_workspace_empty_database_behavior(self):
+        response = self.client.get("/dashboard/customers")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("No customers match the selected filters.", response.text)
+
+        api_response = self.client.get("/dashboard/api/customers")
+        self.assertEqual(api_response.status_code, 200)
+        self.assertEqual(api_response.json()["pagination"]["total"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

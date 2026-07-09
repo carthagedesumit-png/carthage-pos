@@ -3,6 +3,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from app.dashboard.services.dashboard_service import (
+    get_dashboard_crm_summary,
+    get_dashboard_customer_activity,
+    get_dashboard_customer_detail,
     get_dashboard_inventory_summary,
     get_dashboard_inventory_valuation,
     get_dashboard_low_stock_inventory,
@@ -10,6 +13,8 @@ from app.dashboard.services.dashboard_service import (
     get_dashboard_sale_detail,
     get_dashboard_sales_summary,
     get_dashboard_summary,
+    get_dashboard_top_customers,
+    list_dashboard_customers,
     list_dashboard_inventory,
     list_dashboard_sales,
 )
@@ -221,25 +226,77 @@ def dashboard_product_detail(request: Request, product_id: int):
 
 
 @router.get("/customers", response_class=HTMLResponse)
-def dashboard_customers(request: Request):
-    summary = get_dashboard_summary()
-    return render_workspace(
-        request,
-        active_page="customers",
-        page_title="Customer Workspace",
-        page_subtitle="Manage customers, loyalty, wallet balances, and credit accounts.",
-        cards=[
-            {"label": "Customers", "value": summary["customers"]},
-            {"label": "Outstanding Credit", "value": summary["outstanding_credit"]},
-            {"label": "Loyalty Status", "value": "Active"},
-        ],
-        main_panel_title="Customer Relationship Management",
-        main_panel_text="Customer profiles, purchase history, loyalty, wallet and credit management will live here.",
-        steps=[
-            {"title": "Customer list", "text": "Add searchable customer table."},
-            {"title": "Credit accounts", "text": "Add outstanding credit review."},
-            {"title": "Loyalty", "text": "Add loyalty point activity."},
-        ],
+def dashboard_customers(
+    request: Request,
+    search: str = "",
+    customer_group: str = "",
+    active: str = "active",
+    has_credit: bool = False,
+    has_wallet_balance: bool = False,
+    loyalty_customer: bool = False,
+    joined_from: str = "",
+    joined_to: str = "",
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+):
+    result = list_dashboard_customers(
+        {
+            "search": search,
+            "customer_group": customer_group,
+            "active": active,
+            "has_credit": has_credit,
+            "has_wallet_balance": has_wallet_balance,
+            "loyalty_customer": loyalty_customer,
+            "joined_from": joined_from,
+            "joined_to": joined_to,
+            "page": page,
+            "page_size": page_size,
+        }
+    )
+    return templates.TemplateResponse(
+        "customers.html",
+        {
+            "request": request,
+            "title": "CRM Workspace - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "customers",
+            "page_title": "CRM Workspace",
+            "page_subtitle": "Review customers, loyalty, wallets, credit exposure, and purchase activity.",
+            "customers": result["items"],
+            "summary": result["summary"],
+            "filters": result["filters"],
+            "pagination": result["pagination"],
+            "active_filters": ["active", "inactive", "all"],
+        },
+    )
+
+
+@router.get("/customers/{customer_id}", response_class=HTMLResponse)
+def dashboard_customer_detail(request: Request, customer_id: int):
+    detail = get_dashboard_customer_detail(customer_id)
+    if not detail:
+        return templates.TemplateResponse(
+            "customer_detail.html",
+            {
+                "request": request,
+                "title": "Customer Not Found - Carthage Business Operating System",
+                "header": get_header(),
+                "active_page": "customers",
+                "detail": None,
+                "customer_id": customer_id,
+            },
+            status_code=404,
+        )
+    return templates.TemplateResponse(
+        "customer_detail.html",
+        {
+            "request": request,
+            "title": f"{detail['customer']['name']} - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "customers",
+            "detail": detail,
+            "customer_id": customer_id,
+        },
     )
 
 
@@ -466,6 +523,86 @@ def dashboard_inventory_product_api(product_id: int):
             "movements": [],
             "procurement": [],
             "label_actions": [],
+        }
+    return detail
+
+
+@router.get("/api/customers")
+def dashboard_customers_api(
+    search: str = "",
+    customer_group: str = "",
+    active: str = "active",
+    has_credit: bool = False,
+    has_wallet_balance: bool = False,
+    loyalty_customer: bool = False,
+    joined_from: str = "",
+    joined_to: str = "",
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+):
+    return list_dashboard_customers(
+        {
+            "search": search,
+            "customer_group": customer_group,
+            "active": active,
+            "has_credit": has_credit,
+            "has_wallet_balance": has_wallet_balance,
+            "loyalty_customer": loyalty_customer,
+            "joined_from": joined_from,
+            "joined_to": joined_to,
+            "page": page,
+            "page_size": page_size,
+        }
+    )
+
+
+@router.get("/api/customers/summary")
+def dashboard_customers_summary_api(
+    search: str = "",
+    customer_group: str = "",
+    active: str = "active",
+    has_credit: bool = False,
+    has_wallet_balance: bool = False,
+    loyalty_customer: bool = False,
+    joined_from: str = "",
+    joined_to: str = "",
+):
+    return get_dashboard_crm_summary(
+        {
+            "search": search,
+            "customer_group": customer_group,
+            "active": active,
+            "has_credit": has_credit,
+            "has_wallet_balance": has_wallet_balance,
+            "loyalty_customer": loyalty_customer,
+            "joined_from": joined_from,
+            "joined_to": joined_to,
+        }
+    )
+
+
+@router.get("/api/customers/top")
+def dashboard_top_customers_api(limit: int = Query(default=10, ge=1, le=100)):
+    return get_dashboard_top_customers(limit=limit)
+
+
+@router.get("/api/customers/{customer_id}/activity")
+def dashboard_customer_activity_api(customer_id: int):
+    activity = get_dashboard_customer_activity(customer_id)
+    if activity is None:
+        return {"recent_sales": [], "wallet": [], "loyalty": [], "credit": []}
+    return activity
+
+
+@router.get("/api/customers/{customer_id}")
+def dashboard_customer_detail_api(customer_id: int):
+    detail = get_dashboard_customer_detail(customer_id)
+    if not detail:
+        return {
+            "customer": None,
+            "profile": None,
+            "activity": {"recent_sales": [], "wallet": [], "loyalty": [], "credit": []},
+            "actions": [],
         }
     return detail
 

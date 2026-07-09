@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="hero">
+    <div>
+        <h1>{{ page_title }}</h1>
+        <p>{{ page_subtitle }}</p>
+        <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+
+    <div class="hero-status">
+        <span class="status success">Customer Intelligence</span>
+        <span class="status success">Read Only</span>
+    </div>
+</section>
+
+<section class="cards">
+    <div class="card accent-blue">
+        <span>Customers</span>
+        <strong>{{ summary.customer_count }}</strong>
+    </div>
+    <div class="card accent-green">
+        <span>Lifetime Value</span>
+        <strong>{{ summary.lifetime_value_display }}</strong>
+    </div>
+    <div class="card accent-amber">
+        <span>Loyalty Points</span>
+        <strong>{{ summary.loyalty_points }}</strong>
+    </div>
+    <div class="card accent-red">
+        <span>Outstanding Credit</span>
+        <strong>{{ summary.outstanding_credit_display }}</strong>
+    </div>
+</section>
+
+<section class="panel crm-workspace">
+    <form class="filter-form" method="get" action="/dashboard/customers">
+        <label>
+            <span>Search</span>
+            <input type="search" name="search" value="{{ filters.search }}" placeholder="Name, code, phone, email">
+        </label>
+        <label>
+            <span>Customer Group</span>
+            <input type="text" name="customer_group" value="{{ filters.customer_group }}" placeholder="ID or name">
+        </label>
+        <label>
+            <span>Status</span>
+            <select name="active">
+                {% for option in active_filters %}
+                <option value="{{ option }}" {% if filters.active == option %}selected{% endif %}>
+                    {{ option.title() }}
+                </option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            <span>Joined From</span>
+            <input type="date" name="joined_from" value="{{ filters.joined_from }}">
+        </label>
+        <label>
+            <span>Joined To</span>
+            <input type="date" name="joined_to" value="{{ filters.joined_to }}">
+        </label>
+        <label class="check-filter">
+            <span>Has Credit</span>
+            <input type="checkbox" name="has_credit" value="true" {% if filters.has_credit %}checked{% endif %}>
+        </label>
+        <label class="check-filter">
+            <span>Wallet Balance</span>
+            <input type="checkbox" name="has_wallet_balance" value="true" {% if filters.has_wallet_balance %}checked{% endif %}>
+        </label>
+        <label class="check-filter">
+            <span>Loyalty</span>
+            <input type="checkbox" name="loyalty_customer" value="true" {% if filters.loyalty_customer %}checked{% endif %}>
+        </label>
+        <label>
+            <span>Page Size</span>
+            <input type="number" min="1" max="100" name="page_size" value="{{ filters.page_size }}">
+        </label>
+        <div class="filter-actions">
+            <button type="submit">Apply Filters</button>
+            <a href="/dashboard/customers">Reset</a>
+        </div>
+    </form>
+</section>
+
+<section class="panel crm-table-panel">
+    <div class="panel-heading">
+        <div>
+            <h2>Customers</h2>
+            <p class="muted">{{ pagination.total }} matching customer records</p>
+        </div>
+        <span class="status warning">{{ summary.wallet_balance_display }} wallet balance</span>
+    </div>
+
+    {% if customers %}
+    <div class="table-scroll">
+        <table class="table crm-table">
+            <thead>
+                <tr>
+                    <th>Code</th>
+                    <th>Name</th>
+                    <th>Contact</th>
+                    <th>Group</th>
+                    <th>Wallet</th>
+                    <th>Loyalty</th>
+                    <th>Credit</th>
+                    <th>Lifetime Value</th>
+                    <th>Purchases</th>
+                    <th>Last Purchase</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for customer in customers %}
+                <tr>
+                    <td><strong>{{ customer.customer_code }}</strong></td>
+                    <td>{{ customer.name }}</td>
+                    <td>
+                        <span>{{ customer.phone or "No phone" }}</span>
+                        <small class="muted">{{ customer.email or "No email" }}</small>
+                    </td>
+                    <td>{{ customer.group }}</td>
+                    <td><span class="badge badge-wallet">{{ customer.wallet_balance_display }}</span></td>
+                    <td><span class="badge badge-{{ customer.loyalty_status }}">{{ customer.loyalty_points }}</span></td>
+                    <td><span class="badge badge-{{ customer.credit_status.replace(' ', '-') }}">{{ customer.outstanding_credit_display }}</span></td>
+                    <td><strong>{{ customer.lifetime_value_display }}</strong></td>
+                    <td>{{ customer.purchase_count }}</td>
+                    <td>{{ customer.last_purchase_date or "No purchases" }}</td>
+                    <td><span class="badge badge-{{ customer.active_status }}">{{ customer.active_status.title() }}</span></td>
+                    <td><a class="table-action" href="/dashboard/customers/{{ customer.customer_id }}">View</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No customers match the selected filters.</p>
+    {% endif %}
+
+    <div class="pagination">
+        <span>Page {{ pagination.page }} of {{ pagination.total_pages }}</span>
+        <div>
+            {% if pagination.has_previous %}
+            <a href="{{ request.url.include_query_params(page=pagination.previous_page, page_size=pagination.page_size) }}">Previous</a>
+            {% else %}
+            <span class="disabled">Previous</span>
+            {% endif %}
+            {% if pagination.has_next %}
+            <a href="{{ request.url.include_query_params(page=pagination.next_page, page_size=pagination.page_size) }}">Next</a>
+            {% else %}
+            <span class="disabled">Next</span>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+{% endblock %}

@@ -2,7 +2,7 @@
 
 The browser dashboard lives under `/dashboard` and is a management surface for
 owners, managers, and administrators inside the Carthage Business Operating
-System. The POS remains a core operating module. Dashboard pages reuse domain
+System (CBOS). The POS remains a core operating module. Dashboard pages reuse domain
 services for sales, documents, reports, inventory, and platform health rather
 than duplicating business rules in route handlers.
 
@@ -103,6 +103,55 @@ These endpoints use dashboard read helpers that are schema-safe and
 migration-safe. They return empty lists or zeroed summaries when product,
 barcode, store inventory, procurement, or movement tables are unavailable.
 
+## CRM Workspace
+
+`GET /dashboard/customers` renders the CRM Workspace V1 management page. It is
+a read-first customer relationship portal for customer profiles, customer
+groups, wallet balances, loyalty activity, credit exposure, and purchase
+history.
+
+The page includes:
+
+- Summary cards for customer count, lifetime value, loyalty points, and
+  outstanding credit.
+- A responsive customer table with customer code, name, phone/email, group,
+  wallet balance, loyalty points, outstanding credit, lifetime value, last
+  purchase date, and active status.
+- Credit, wallet, and loyalty badges.
+- Filter controls that preserve selected query parameters.
+- Empty-state handling and previous/next pagination.
+
+Supported query parameters:
+
+- `search`
+- `customer_group` as a group ID or group name fragment
+- `active` with `active`, `inactive`, or `all`
+- `has_credit`
+- `has_wallet_balance`
+- `loyalty_customer`
+- `joined_from`
+- `joined_to`
+- `page`
+- `page_size`
+
+`GET /dashboard/customers/{customer_id}` renders a read-only customer detail
+page with profile, contact information, customer group, lifetime sales, recent
+sales, wallet history, loyalty history, credit history, and statement/print/
+export action placeholders.
+
+## CRM JSON Endpoints
+
+The dashboard exposes lightweight JSON endpoints for CRM workspace data:
+
+- `GET /dashboard/api/customers`
+- `GET /dashboard/api/customers/summary`
+- `GET /dashboard/api/customers/top`
+- `GET /dashboard/api/customers/{customer_id}`
+- `GET /dashboard/api/customers/{customer_id}/activity`
+
+These endpoints use dashboard read helpers and return safe empty structures when
+customer, sales, wallet, loyalty, or credit tables are unavailable.
+
 ## Authorization Foundation
 
 The current dashboard has a placeholder identity boundary in the dashboard
@@ -120,6 +169,7 @@ activation documents, bearer tokens, or payment credentials.
 
 - Sales workspace actions are read-only.
 - Inventory workspace actions are read-only.
+- CRM workspace actions are read-only.
 - Full dashboard browser authentication is not enabled yet.
 - Store, cashier, and customer filters currently accept IDs instead of lookup
   selectors.
@@ -127,5 +177,6 @@ activation documents, bearer tokens, or payment credentials.
   of lookup selectors.
 - Label print actions are placeholders; full label workflow remains in barcode
   and hardware services.
+- Statement, print, and export actions in CRM are placeholders.
 - Receipt preview availability depends on the existing document service and the
   persisted sale schema.

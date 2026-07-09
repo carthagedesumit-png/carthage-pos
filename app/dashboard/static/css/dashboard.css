@@ -421,6 +421,8 @@ body {
 .sales-table-panel,
 .inventory-workspace,
 .inventory-table-panel,
+.crm-workspace,
+.crm-table-panel,
 .receipt-panel {
     margin-top: 24px;
 }
@@ -526,6 +528,15 @@ body {
     min-width: 1320px;
 }
 
+.crm-table {
+    min-width: 1240px;
+}
+
+.crm-table td small {
+    display: block;
+    margin-top: 4px;
+}
+
 .badge {
     display: inline-block;
     border-radius: 999px;
@@ -563,6 +574,23 @@ body {
 .badge-in-stock {
     background: #dcfce7;
     color: #166534;
+}
+
+.badge-wallet,
+.badge-loyalty {
+    background: #e0f2fe;
+    color: #075985;
+}
+
+.badge-credit-due {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.badge-clear,
+.badge-standard {
+    background: #f1f5f9;
+    color: #475569;
 }
 
 .pagination {
