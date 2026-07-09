@@ -1,122 +1,90 @@
-let salesChart = null;
-
 async function fetchJson(url) {
     const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Request failed: ${url}`);
-    }
+    if (!response.ok) throw new Error(`Request failed: ${url}`);
     return await response.json();
 }
 
-function money(value) {
-    const number = Number(value || 0);
-    return `₦${number.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+function formatMoney(value) {
+    return `₦${Number(value || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    })}`;
 }
 
-async function loadSalesChart() {
-    const data = await fetchJson("/dashboard/api/sales-chart");
-    const ctx = document.getElementById("salesChart");
+function renderSalesTrend(trend) {
+    const container = document.getElementById("salesTrendChart");
+    if (!container) return;
 
-    if (!ctx) return;
+    container.innerHTML = "";
 
-    if (salesChart) {
-        salesChart.destroy();
-    }
+    const max = Math.max(...trend.map(item => item.sales), 1);
 
-    salesChart = new Chart(ctx, {
-        type: "line",
-        data: {
-            labels: data.labels,
-            datasets: [{
-                label: "Sales",
-                data: data.values,
-                tension: 0.35
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: { display: true }
-            }
-        }
+    trend.forEach(item => {
+        const bar = document.createElement("div");
+        bar.className = "dynamic-bar";
+        bar.style.height = `${Math.max((item.sales / max) * 180, 12)}px`;
+        bar.title = `${item.date}: ${formatMoney(item.sales)}`;
+        container.appendChild(bar);
     });
 }
 
-async function loadRecentSales() {
-    const rows = await fetchJson("/dashboard/api/recent-sales");
-    const body = document.getElementById("recentSalesBody");
-    if (!body) return;
+function renderTopProducts(products) {
+    const container = document.getElementById("topProductsList");
+    if (!container) return;
 
-    body.innerHTML = rows.length
-        ? rows.map(row => `
-            <tr>
-                <td>${row.sale_reference ?? "-"}</td>
-                <td>${row.cashier_name ?? "-"}</td>
-                <td>${money(row.total_amount)}</td>
-            </tr>
-        `).join("")
-        : `<tr><td colspan="3">No recent sales</td></tr>`;
+    if (!products.length) {
+        container.innerHTML = `<p class="empty-state">No product sales yet.</p>`;
+        return;
+    }
+
+    container.innerHTML = products.map(product => `
+        <div class="ranking-item">
+            <span>${product.name}</span>
+            <strong>${product.quantity} sold</strong>
+            <small>${product.revenue}</small>
+        </div>
+    `).join("");
 }
 
-async function loadTopProducts() {
-    const rows = await fetchJson("/dashboard/api/top-products");
-    const body = document.getElementById("topProductsBody");
-    if (!body) return;
+function renderInsights(insights) {
+    const container = document.getElementById("businessInsights");
+    if (!container) return;
 
-    body.innerHTML = rows.length
-        ? rows.map(row => `
-            <tr>
-                <td>${row.product_name ?? "-"}</td>
-                <td>${row.qty ?? 0}</td>
-            </tr>
-        `).join("")
-        : `<tr><td colspan="2">No product sales yet</td></tr>`;
+    container.innerHTML = insights.map(item => `
+        <div class="notification-item">
+            <strong>💡 Insight</strong>
+            <span>${item}</span>
+        </div>
+    `).join("");
 }
 
-async function loadLowStock() {
-    const rows = await fetchJson("/dashboard/api/low-stock");
-    const body = document.getElementById("lowStockBody");
-    if (!body) return;
-
-    body.innerHTML = rows.length
-        ? rows.map(row => `
-            <tr>
-                <td>${row.quantity_on_hand}</td>
-                <td>${row.reorder_level}</td>
-            </tr>
-        `).join("")
-        : `<tr><td colspan="2">No low-stock alerts</td></tr>`;
-}
-
-async function loadDashboardWidgets() {
+async function loadBusinessIntelligence() {
     try {
-        await Promise.all([
-            loadSalesChart(),
-            loadRecentSales(),
-            loadTopProducts(),
-            loadLowStock()
-        ]);
+        const trend = await fetchJson("/dashboard/api/sales-trend");
+        renderSalesTrend(trend.trend || []);
+
+        const products = await fetchJson("/dashboard/api/top-products");
+        renderTopProducts(products.products || []);
+
+        const insights = await fetchJson("/dashboard/api/insights");
+        renderInsights(insights.insights || []);
     } catch (error) {
-        console.error("Dashboard refresh failed", error);
+        console.error("Dashboard BI load failed", error);
     }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-    loadDashboardWidgets();
-    setInterval(loadDashboardWidgets, 30000);
-});
+function updateClock() {
+    const el = document.getElementById("dashboardClock");
+    if (!el) return;
 
-function updateClock(){
-
-    const clock=document.getElementById("liveClock");
-
-    if(!clock) return;
-
-    clock.textContent=new Date().toLocaleTimeString();
-
+    const now = new Date();
+    el.textContent = now.toLocaleTimeString();
 }
 
-updateClock();
+document.addEventListener("DOMContentLoaded", () => {
+    loadBusinessIntelligence();
+    updateClock();
 
-setInterval(updateClock,1000);
-
+    setInterval(updateClock, 1000);
+    setInterval(loadBusinessIntelligence, 60000);
+});

@@ -7,6 +7,8 @@
         <h1>Good Morning, {{ header.user }}</h1>
         <p>{{ header.store }} · Executive Business Command Center</p>
         <small>Last updated: {{ metrics.generated_at }}</small>
+        <br>
+        <span class="clock-pill" id="dashboardClock">--:--:--</span>
     </div>
 
     <div class="hero-status">
@@ -27,6 +29,28 @@
     <div class="card"><span>Customers</span><strong>{{ metrics.customers }}</strong></div>
     <div class="card"><span>Stores</span><strong>{{ metrics.stores }}</strong></div>
     <div class="card"><span>Users</span><strong>{{ metrics.users }}</strong></div>
+</section>
+
+<section class="dashboard-grid">
+
+    <div class="panel">
+        <h2>Sales Trend</h2>
+        <div class="dynamic-chart" id="salesTrendChart">
+            <p class="empty-state">Loading sales trend...</p>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>System Health</h2>
+
+        <div class="health-list">
+            <div class="health-item"><span class="health-label"><span class="dot green"></span> API</span><strong>{{ metrics.api_status }}</strong></div>
+            <div class="health-item"><span class="health-label"><span class="dot green"></span> License</span><strong>{{ metrics.license_status }}</strong></div>
+            <div class="health-item"><span class="health-label"><span class="dot green"></span> Backup</span><strong>{{ metrics.backup_status }}</strong></div>
+            <div class="health-item"><span class="health-label"><span class="dot amber"></span> Hardware</span><strong>{{ metrics.hardware_status }}</strong></div>
+        </div>
+    </div>
+
 </section>
 
 <section class="dashboard-grid">
@@ -63,13 +87,9 @@
     </div>
 
     <div class="panel">
-        <h2>System Health</h2>
-
-        <div class="health-list">
-            <div class="health-item"><span class="health-label"><span class="dot green"></span> API</span><strong>{{ metrics.api_status }}</strong></div>
-            <div class="health-item"><span class="health-label"><span class="dot green"></span> License</span><strong>{{ metrics.license_status }}</strong></div>
-            <div class="health-item"><span class="health-label"><span class="dot green"></span> Backup</span><strong>{{ metrics.backup_status }}</strong></div>
-            <div class="health-item"><span class="health-label"><span class="dot amber"></span> Hardware</span><strong>{{ metrics.hardware_status }}</strong></div>
+        <h2>Top Products</h2>
+        <div class="ranking-list" id="topProductsList">
+            <p class="empty-state">Loading top products...</p>
         </div>
     </div>
 
@@ -105,6 +125,20 @@
     </div>
 
     <div class="panel">
+        <h2>Business Insights</h2>
+        <div class="notification-list" id="businessInsights">
+            <div class="notification-item">
+                <strong>Loading insights...</strong>
+                <span>Please wait.</span>
+            </div>
+        </div>
+    </div>
+
+</section>
+
+<section class="dashboard-grid">
+
+    <div class="panel">
         <h2>Quick Actions</h2>
 
         <div class="quick-actions">
@@ -114,19 +148,6 @@
             <a class="quick-action" href="#"><span>💾</span>Backup</a>
             <a class="quick-action" href="#"><span>📊</span>Reports</a>
         </div>
-    </div>
-
-</section>
-
-<section class="dashboard-grid">
-
-    <div class="panel">
-        <h2>Sales Trend</h2>
-        <div class="chart-placeholder">
-            <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
-            <div class="bar"></div><div class="bar"></div><div class="bar"></div>
-        </div>
-        <p>Chart foundation ready. Live hourly sales comes next.</p>
     </div>
 
     <div class="panel">
