@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="hero">
+    <div>
+        <h1>{{ page_title }}</h1>
+        <p>{{ page_subtitle }}</p>
+        <small>{{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+
+    <div class="hero-status">
+        <span class="status success">Management Review</span>
+        <span class="status success">Read Only</span>
+    </div>
+</section>
+
+<section class="cards">
+    <div class="card accent-blue">
+        <span>Net Sales</span>
+        <strong>{{ summary.net_sales_display }}</strong>
+    </div>
+    <div class="card accent-green">
+        <span>Transactions</span>
+        <strong>{{ summary.transaction_count }}</strong>
+    </div>
+    <div class="card accent-amber">
+        <span>Refunds</span>
+        <strong>{{ summary.refunds_display }}</strong>
+    </div>
+    <div class="card accent-red">
+        <span>Discounts</span>
+        <strong>{{ summary.discounts_display }}</strong>
+    </div>
+</section>
+
+<section class="panel sales-workspace">
+    <form class="filter-form" method="get" action="/dashboard/sales">
+        <label>
+            <span>Date From</span>
+            <input type="date" name="date_from" value="{{ filters.date_from }}">
+        </label>
+        <label>
+            <span>Date To</span>
+            <input type="date" name="date_to" value="{{ filters.date_to }}">
+        </label>
+        <label>
+            <span>Store ID</span>
+            <input type="number" min="1" name="store_id" value="{{ filters.store_id or '' }}">
+        </label>
+        <label>
+            <span>Cashier ID</span>
+            <input type="number" min="1" name="cashier_id" value="{{ filters.cashier_id or '' }}">
+        </label>
+        <label>
+            <span>Customer ID</span>
+            <input type="number" min="1" name="customer_id" value="{{ filters.customer_id or '' }}">
+        </label>
+        <label>
+            <span>Payment</span>
+            <select name="payment_method">
+                {% for method in payment_methods %}
+                <option value="{{ method }}" {% if filters.payment_method == method %}selected{% endif %}>
+                    {{ method or "Any" }}
+                </option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            <span>Refunds</span>
+            <select name="refunded">
+                {% for option in refund_filters %}
+                <option value="{{ option }}" {% if filters.refunded == option %}selected{% endif %}>
+                    {{ option.replace("-", " ").title() }}
+                </option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            <span>Search</span>
+            <input type="search" name="search" value="{{ filters.search }}" placeholder="Receipt, customer, cashier">
+        </label>
+        <label>
+            <span>Page Size</span>
+            <input type="number" min="1" max="100" name="page_size" value="{{ filters.page_size }}">
+        </label>
+        <div class="filter-actions">
+            <button type="submit">Apply Filters</button>
+            <a href="/dashboard/sales">Reset</a>
+        </div>
+    </form>
+</section>
+
+<section class="panel sales-table-panel">
+    <div class="panel-heading">
+        <div>
+            <h2>Recent Sales</h2>
+            <p class="muted">{{ pagination.total }} matching sales</p>
+        </div>
+        <span class="status success">{{ summary.average_sale_display }} avg</span>
+    </div>
+
+    {% if sales %}
+    <div class="table-scroll">
+        <table class="table sales-table">
+            <thead>
+                <tr>
+                    <th>Receipt</th>
+                    <th>Date/Time</th>
+                    <th>Customer</th>
+                    <th>Store</th>
+                    <th>Cashier</th>
+                    <th>Payment</th>
+                    <th>Gross</th>
+                    <th>Discount</th>
+                    <th>Refund</th>
+                    <th>Net</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sale in sales %}
+                <tr>
+                    <td><strong>{{ sale.receipt_number }}</strong></td>
+                    <td>{{ sale.sale_time or "Unknown" }}</td>
+                    <td>{{ sale.customer_name }}</td>
+                    <td>{{ sale.store }}</td>
+                    <td>{{ sale.cashier }}</td>
+                    <td>{{ sale.payment_method }}</td>
+                    <td>{{ sale.gross_amount_display }}</td>
+                    <td>{{ sale.discount_display }}</td>
+                    <td>{{ sale.refund_display }}</td>
+                    <td><strong>{{ sale.net_amount_display }}</strong></td>
+                    <td><span class="badge badge-{{ sale.sale_status.replace(' ', '-') }}">{{ sale.sale_status.title() }}</span></td>
+                    <td><a class="table-action" href="/dashboard/sales/{{ sale.sale_id }}">View</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No sales match the selected filters.</p>
+    {% endif %}
+
+    <div class="pagination">
+        <span>Page {{ pagination.page }} of {{ pagination.total_pages }}</span>
+        <div>
+            {% if pagination.has_previous %}
+            <a href="{{ request.url.include_query_params(page=pagination.previous_page, page_size=pagination.page_size) }}">Previous</a>
+            {% else %}
+            <span class="disabled">Previous</span>
+            {% endif %}
+            {% if pagination.has_next %}
+            <a href="{{ request.url.include_query_params(page=pagination.next_page, page_size=pagination.page_size) }}">Next</a>
+            {% else %}
+            <span class="disabled">Next</span>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+{% endblock %}

@@ -1,8 +1,13 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from app.dashboard.services.dashboard_service import get_dashboard_summary
+from app.dashboard.services.dashboard_service import (
+    get_dashboard_sale_detail,
+    get_dashboard_sales_summary,
+    get_dashboard_summary,
+    list_dashboard_sales,
+)
 
 templates = Jinja2Templates(directory="app/dashboard/templates")
 
@@ -59,24 +64,78 @@ def dashboard_home(request: Request):
 
 
 @router.get("/sales", response_class=HTMLResponse)
-def dashboard_sales(request: Request):
-    return render_workspace(
-        request,
-        active_page="sales",
-        page_title="Sales Workspace",
-        page_subtitle="Monitor transactions, returns, payments, receipts, and sales performance.",
-        cards=[
-            {"label": "Today Sales", "value": get_dashboard_summary()["today_sales"]},
-            {"label": "Transactions", "value": get_dashboard_summary()["transactions"]},
-            {"label": "Refunds", "value": "0"},
-        ],
-        main_panel_title="Sales Operations",
-        main_panel_text="Sales order review, returns, payment summaries, and receipt actions will live here.",
-        steps=[
-            {"title": "Recent sales", "text": "Connect full sales table with filtering."},
-            {"title": "Returns", "text": "Add refund and credit note review workflow."},
-            {"title": "Payments", "text": "Add payment method breakdown."},
-        ],
+def dashboard_sales(
+    request: Request,
+    date_from: str = "",
+    date_to: str = "",
+    store_id: int | None = Query(default=None),
+    cashier_id: int | None = Query(default=None),
+    customer_id: int | None = Query(default=None),
+    payment_method: str = "",
+    search: str = "",
+    refunded: str = "all",
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+):
+    result = list_dashboard_sales(
+        {
+            "date_from": date_from,
+            "date_to": date_to,
+            "store_id": store_id,
+            "cashier_id": cashier_id,
+            "customer_id": customer_id,
+            "payment_method": payment_method,
+            "search": search,
+            "refunded": refunded,
+            "page": page,
+            "page_size": page_size,
+        }
+    )
+    return templates.TemplateResponse(
+        "sales.html",
+        {
+            "request": request,
+            "title": "Sales Workspace - Carthage POS",
+            "header": get_header(),
+            "active_page": "sales",
+            "page_title": "Sales Workspace",
+            "page_subtitle": "Review sales, payments, refunds, receipts, and store performance.",
+            "sales": result["items"],
+            "summary": result["summary"],
+            "filters": result["filters"],
+            "pagination": result["pagination"],
+            "payment_methods": ["", "CASH", "CARD", "TRANSFER", "WALLET", "CREDIT", "MIXED"],
+            "refund_filters": ["all", "refunded", "non-refunded"],
+        },
+    )
+
+
+@router.get("/sales/{sale_id}", response_class=HTMLResponse)
+def dashboard_sale_detail(request: Request, sale_id: int):
+    detail = get_dashboard_sale_detail(sale_id)
+    if not detail:
+        return templates.TemplateResponse(
+            "sale_detail.html",
+            {
+                "request": request,
+                "title": "Sale Not Found - Carthage POS",
+                "header": get_header(),
+                "active_page": "sales",
+                "detail": None,
+                "sale_id": sale_id,
+            },
+            status_code=404,
+        )
+    return templates.TemplateResponse(
+        "sale_detail.html",
+        {
+            "request": request,
+            "title": f"Sale {detail['sale']['receipt_number']} - Carthage POS",
+            "header": get_header(),
+            "active_page": "sales",
+            "detail": detail,
+            "sale_id": sale_id,
+        },
     )
 
 
@@ -198,6 +257,68 @@ def dashboard_summary():
     return get_dashboard_summary()
 
 
+@router.get("/api/sales")
+def dashboard_sales_api(
+    date_from: str = "",
+    date_to: str = "",
+    store_id: int | None = Query(default=None),
+    cashier_id: int | None = Query(default=None),
+    customer_id: int | None = Query(default=None),
+    payment_method: str = "",
+    search: str = "",
+    refunded: str = "all",
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+):
+    return list_dashboard_sales(
+        {
+            "date_from": date_from,
+            "date_to": date_to,
+            "store_id": store_id,
+            "cashier_id": cashier_id,
+            "customer_id": customer_id,
+            "payment_method": payment_method,
+            "search": search,
+            "refunded": refunded,
+            "page": page,
+            "page_size": page_size,
+        }
+    )
+
+
+@router.get("/api/sales-summary")
+def dashboard_sales_summary_api(
+    date_from: str = "",
+    date_to: str = "",
+    store_id: int | None = Query(default=None),
+    cashier_id: int | None = Query(default=None),
+    customer_id: int | None = Query(default=None),
+    payment_method: str = "",
+    search: str = "",
+    refunded: str = "all",
+):
+    return get_dashboard_sales_summary(
+        {
+            "date_from": date_from,
+            "date_to": date_to,
+            "store_id": store_id,
+            "cashier_id": cashier_id,
+            "customer_id": customer_id,
+            "payment_method": payment_method,
+            "search": search,
+            "refunded": refunded,
+        }
+    )
+
+
+@router.get("/api/sales/{sale_id}")
+def dashboard_sale_detail_api(sale_id: int):
+    detail = get_dashboard_sale_detail(sale_id)
+    if not detail:
+        return {"sale": None, "items": [], "payments": [], "returns": [], "receipt_preview": ""}
+    return detail
+
+
 @router.get("/health")
 def dashboard_health():
     return {"status": "ok", "module": "dashboard"}
@@ -225,7 +346,7 @@ def dashboard_sales_trend():
 
 @router.get("/api/top-products")
 def dashboard_top_products():
-    return {"products": top_products()}
+    return top_products()
 
 
 @router.get("/api/insights")

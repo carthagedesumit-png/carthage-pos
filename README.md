@@ -57,6 +57,11 @@ Open `http://127.0.0.1:8000/docs` for the interactive API reference. See
 [`docs/api.md`](docs/api.md) for authentication, endpoint groups, examples, and
 the error contract.
 
+The browser dashboard is available under `/dashboard` when the API app is
+running. The Sales Workspace at `/dashboard/sales` provides read-only sales
+management filters, pagination, sale detail pages, and lightweight dashboard
+JSON endpoints. See [`docs/dashboard.md`](docs/dashboard.md).
+
 Hardware configuration and mock-device testing are documented in
 [`docs/hardware.md`](docs/hardware.md).
 Barcode formats, label templates, configuration, and printing workflows are in

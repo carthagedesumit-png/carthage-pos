@@ -38,6 +38,9 @@ Dependencies flow inward:
 - `app/customers`: customer profiles, groups, loyalty, wallet, and credit ledgers.
 - `app/reports`: refund-aware analytics and inventory valuation.
 - `app/documents`: side-effect-free business document assembly and rendering.
+- `app/dashboard`: browser management workspaces, dashboard-specific read
+  models, BI widgets, and lightweight JSON endpoints. Dashboard routes delegate
+  sales, reporting, and document behavior to service helpers and domain modules.
 - `app/barcodes`: normalized identifiers, label rendering/printing, scanner
   lookup, and barcode operational reports.
 - `app/backup`: SQLite snapshots, manifests, verification, atomic restore,

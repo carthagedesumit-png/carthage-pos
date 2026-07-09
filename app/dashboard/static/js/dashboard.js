@@ -64,7 +64,7 @@ async function loadBusinessIntelligence() {
         renderSalesTrend(trend.trend || []);
 
         const products = await fetchJson("/dashboard/api/top-products");
-        renderTopProducts(products.products || []);
+        renderTopProducts(Array.isArray(products) ? products : products.products || []);
 
         const insights = await fetchJson("/dashboard/api/insights");
         renderInsights(insights.insights || []);

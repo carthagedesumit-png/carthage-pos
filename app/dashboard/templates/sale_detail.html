@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{% if not detail %}
+<section class="hero">
+    <div>
+        <h1>Sale Not Found</h1>
+        <p>No sale record is available for ID {{ sale_id }}.</p>
+        <small>{{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <a class="hero-link" href="/dashboard/sales">Back to Sales</a>
+    </div>
+</section>
+{% else %}
+<section class="hero">
+    <div>
+        <h1>{{ detail.sale.receipt_number }}</h1>
+        <p>{{ detail.sale.created_at or detail.sale.timestamp or "Unknown date" }} &middot; {{ detail.store.name if detail.store else "Main Store" }}</p>
+        <small>{{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <span class="status success">{{ detail.sale.payment_method }}</span>
+        <span class="status warning">{{ detail.sale.sale_status.title() }}</span>
+        <a class="hero-link" href="/dashboard/sales">Back to Sales</a>
+    </div>
+</section>
+
+<section class="cards">
+    <div class="card accent-blue">
+        <span>Total</span>
+        <strong>{{ "â‚¦{:,.2f}".format(detail.sale.total_amount or detail.sale.total or 0) }}</strong>
+    </div>
+    <div class="card accent-red">
+        <span>Refunded</span>
+        <strong>{{ "â‚¦{:,.2f}".format(detail.sale.refund_total or 0) }}</strong>
+    </div>
+    <div class="card accent-green">
+        <span>Net</span>
+        <strong>{{ "â‚¦{:,.2f}".format(detail.sale.net_amount or 0) }}</strong>
+    </div>
+    <div class="card accent-amber">
+        <span>Cashier</span>
+        <strong>{{ detail.sale.cashier_name or detail.sale.username or "system" }}</strong>
+    </div>
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>Line Items</h2>
+        {% if detail["items"] %}
+        <div class="table-scroll">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>SKU</th>
+                        <th>Product</th>
+                        <th>Qty</th>
+                        <th>Unit</th>
+                        <th>Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in detail["items"] %}
+                    <tr>
+                        <td>{{ item.sku or item.product_id }}</td>
+                        <td>{{ item.name or "Unknown product" }}</td>
+                        <td>{{ item.quantity }}</td>
+                        <td>{{ "â‚¦{:,.2f}".format(item.price_at_sale or 0) }}</td>
+                        <td>{{ "â‚¦{:,.2f}".format(item.line_total or 0) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="empty-state">No line items are recorded for this sale.</p>
+        {% endif %}
+    </div>
+
+    <div class="panel">
+        <h2>Customer</h2>
+        {% if detail.customer %}
+        <div class="detail-list">
+            <span>Code <strong>{{ detail.customer.customer_code }}</strong></span>
+            <span>Name <strong>{{ detail.customer.business_name or (detail.customer.first_name ~ " " ~ detail.customer.last_name) }}</strong></span>
+        </div>
+        {% else %}
+        <p class="empty-state">Guest sale.</p>
+        {% endif %}
+    </div>
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>Payment Breakdown</h2>
+        {% if detail.payments %}
+        <div class="detail-list">
+            {% for payment in detail.payments %}
+            <span>{{ payment.payment_method }} <strong>{{ "â‚¦{:,.2f}".format(payment.amount or 0) }}</strong></span>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No tender allocations were recorded.</p>
+        {% endif %}
+    </div>
+
+    <div class="panel">
+        <h2>Refund Summary</h2>
+        {% if detail.returns %}
+        <div class="detail-list">
+            {% for item in detail.returns %}
+            <span>#{{ item.id }} {{ item.reason }} <strong>{{ "â‚¦{:,.2f}".format(item.total_refunded or 0) }}</strong></span>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No refunds recorded.</p>
+        {% endif %}
+    </div>
+</section>
+
+<section class="panel receipt-panel">
+    <h2>Receipt Preview</h2>
+    {% if detail.receipt_preview %}
+    <pre class="receipt-preview">{{ detail.receipt_preview }}</pre>
+    {% else %}
+    <p class="empty-state">{{ detail.receipt_error or "Receipt preview is unavailable." }}</p>
+    {% endif %}
+</section>
+{% endif %}
+
+{% endblock %}
