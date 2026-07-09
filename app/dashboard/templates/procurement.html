@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="hero">
+    <div>
+        <h1>{{ page_title }}</h1>
+        <p>{{ page_subtitle }}</p>
+        <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+
+    <div class="hero-status">
+        <span class="status success">Supplier Operations</span>
+        <span class="status success">Read Only</span>
+    </div>
+</section>
+
+<section class="cards">
+    <div class="card accent-blue">
+        <span>Purchase Orders</span>
+        <strong>{{ summary.purchase_order_count }}</strong>
+    </div>
+    <div class="card accent-green">
+        <span>Estimated Value</span>
+        <strong>{{ summary.estimated_value_display }}</strong>
+    </div>
+    <div class="card accent-amber">
+        <span>Pending Receipt</span>
+        <strong>{{ summary.pending_count }}</strong>
+    </div>
+    <div class="card accent-red">
+        <span>Suppliers</span>
+        <strong>{{ summary.supplier_count }}</strong>
+    </div>
+</section>
+
+<section class="panel procurement-workspace">
+    <form class="filter-form" method="get" action="/dashboard/procurement">
+        <label>
+            <span>Search</span>
+            <input type="search" name="search" value="{{ filters.search }}" placeholder="PO, supplier, status, notes">
+        </label>
+        <label>
+            <span>Supplier ID</span>
+            <input type="number" min="1" name="supplier_id" value="{{ filters.supplier_id or '' }}">
+        </label>
+        <label>
+            <span>Store ID</span>
+            <input type="number" min="1" name="store_id" value="{{ filters.store_id or '' }}">
+        </label>
+        <label>
+            <span>Status</span>
+            <select name="status">
+                {% for option in status_filters %}
+                <option value="{{ option }}" {% if filters.status == option %}selected{% endif %}>
+                    {{ option.replace("_", " ").title() if option else "All" }}
+                </option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            <span>Created From</span>
+            <input type="date" name="date_from" value="{{ filters.date_from }}">
+        </label>
+        <label>
+            <span>Created To</span>
+            <input type="date" name="date_to" value="{{ filters.date_to }}">
+        </label>
+        <label class="check-filter">
+            <span>Pending Only</span>
+            <input type="checkbox" name="pending_only" value="true" {% if filters.pending_only %}checked{% endif %}>
+        </label>
+        <label class="check-filter">
+            <span>Partial</span>
+            <input type="checkbox" name="partially_received" value="true" {% if filters.partially_received %}checked{% endif %}>
+        </label>
+        <label class="check-filter">
+            <span>Completed</span>
+            <input type="checkbox" name="completed" value="true" {% if filters.completed %}checked{% endif %}>
+        </label>
+        <label class="check-filter">
+            <span>Cancelled</span>
+            <input type="checkbox" name="cancelled" value="true" {% if filters.cancelled %}checked{% endif %}>
+        </label>
+        <label>
+            <span>Page Size</span>
+            <input type="number" min="1" max="100" name="page_size" value="{{ filters.page_size }}">
+        </label>
+        <div class="filter-actions">
+            <button type="submit">Apply Filters</button>
+            <a href="/dashboard/procurement">Reset</a>
+        </div>
+    </form>
+</section>
+
+<section class="panel procurement-table-panel">
+    <div class="panel-heading">
+        <div>
+            <h2>Purchase Orders</h2>
+            <p class="muted">{{ pagination.total }} matching purchase order records</p>
+        </div>
+        <span class="status warning">{{ summary.received_quantity }} of {{ summary.ordered_quantity }} units received</span>
+    </div>
+
+    {% if purchase_orders %}
+    <div class="table-scroll">
+        <table class="table procurement-table">
+            <thead>
+                <tr>
+                    <th>Reference</th>
+                    <th>Supplier</th>
+                    <th>Store</th>
+                    <th>Status</th>
+                    <th>Expected</th>
+                    <th>Created</th>
+                    <th>Ordered</th>
+                    <th>Received</th>
+                    <th>Remaining</th>
+                    <th>Estimated Value</th>
+                    <th>Created By</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for purchase_order in purchase_orders %}
+                <tr>
+                    <td><strong>{{ purchase_order.reference_number }}</strong></td>
+                    <td><a class="table-link" href="/dashboard/procurement/suppliers/{{ purchase_order.supplier_id }}">{{ purchase_order.supplier_name }}</a></td>
+                    <td>{{ purchase_order.store_name }}</td>
+                    <td><span class="badge badge-{{ purchase_order.badge }}">{{ purchase_order.status_label }}</span></td>
+                    <td>{{ purchase_order.expected_delivery_date or "No date" }}</td>
+                    <td>{{ purchase_order.submitted_at or purchase_order.created_at }}</td>
+                    <td>{{ purchase_order.ordered_quantity }}</td>
+                    <td>{{ purchase_order.received_quantity }}</td>
+                    <td>{{ purchase_order.remaining_quantity }}</td>
+                    <td><strong>{{ purchase_order.estimated_value_display }}</strong></td>
+                    <td>{{ purchase_order.created_by }}</td>
+                    <td><a class="table-action" href="/dashboard/procurement/purchase-orders/{{ purchase_order.id }}">View</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No purchase orders match the selected filters.</p>
+    {% endif %}
+
+    <div class="pagination">
+        <span>Page {{ pagination.page }} of {{ pagination.total_pages }}</span>
+        <div>
+            {% if pagination.has_previous %}
+            <a href="{{ request.url.include_query_params(page=pagination.previous_page, page_size=pagination.page_size) }}">Previous</a>
+            {% else %}
+            <span class="disabled">Previous</span>
+            {% endif %}
+            {% if pagination.has_next %}
+            <a href="{{ request.url.include_query_params(page=pagination.next_page, page_size=pagination.page_size) }}">Next</a>
+            {% else %}
+            <span class="disabled">Next</span>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+{% endblock %}

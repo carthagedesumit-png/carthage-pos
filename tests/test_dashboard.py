@@ -484,5 +484,206 @@ class DashboardCrmEmptyDatabaseTestCase(unittest.TestCase):
         self.assertEqual(api_response.json()["pagination"]["total"], 0)
 
 
+class DashboardProcurementWorkspaceTestCase(unittest.TestCase):
+    def setUp(self):
+        self.db_file = tempfile.NamedTemporaryFile(delete=False)
+        self.db_file.close()
+        os.environ["CARTHAGE_POS_DB"] = self.db_file.name
+
+        from app.database.db_manager import initialize_database
+        from app.inventory.inventory_service import create_product
+        from app.procurement.purchase_service import (
+            cancel_purchase_order,
+            create_purchase_order,
+            receive_purchase_order,
+            submit_purchase_order,
+        )
+        from app.procurement.supplier_service import create_supplier
+        from tests.support import bootstrap_staff
+
+        initialize_database()
+        sessions = bootstrap_staff()
+        self.manager_session = sessions["manager"]
+        self.admin_session = sessions["admin"]
+        self.client = TestClient(app)
+        self.supplier = create_supplier(
+            self.manager_session,
+            "Dashboard Procurement Supplier",
+            phone="555-0200",
+            email="procurement@example.com",
+            address="20 Supply Avenue",
+        )
+        self.other_supplier = create_supplier(
+            self.manager_session,
+            "Dashboard Secondary Supplier",
+            phone="555-0201",
+        )
+        self.product = create_product(
+            self.manager_session,
+            sku="DASH-PROC-ITEM",
+            barcode="DASH-PROC-ITEM",
+            name="Dashboard Procurement Item",
+            selling_price=30.0,
+            cost_price=10.0,
+            quantity_in_stock=20,
+            reorder_level=5,
+        )
+        first_order = create_purchase_order(
+            self.manager_session,
+            self.supplier["id"],
+            "DASH-PO-1",
+            [{"product_id": self.product["id"], "quantity": 10, "unit_cost": 12.0}],
+            expected_delivery_date="2026-12-31",
+            notes="Dashboard procurement restock",
+        )
+        self.partial_order = submit_purchase_order(
+            self.manager_session, first_order["purchase_order"]["id"]
+        )
+        receive_purchase_order(
+            self.manager_session,
+            self.partial_order["purchase_order"]["id"],
+            [{"purchase_order_item_id": self.partial_order["items"][0]["id"], "quantity": 4}],
+            notes="First procurement delivery",
+        )
+        self.partial_order_id = self.partial_order["purchase_order"]["id"]
+        second_order = create_purchase_order(
+            self.manager_session,
+            self.other_supplier["id"],
+            "DASH-PO-2",
+            [{"product_id": self.product["id"], "quantity": 5, "unit_cost": 11.0}],
+        )
+        self.submitted_order = submit_purchase_order(
+            self.manager_session, second_order["purchase_order"]["id"]
+        )
+        cancelled = create_purchase_order(
+            self.manager_session,
+            self.supplier["id"],
+            "DASH-PO-3",
+            [{"product_id": self.product["id"], "quantity": 2, "unit_cost": 10.0}],
+        )
+        self.cancelled_order = cancel_purchase_order(
+            self.admin_session, cancelled["purchase_order"]["id"]
+        )
+
+    def tearDown(self):
+        os.environ.pop("CARTHAGE_POS_DB", None)
+        os.unlink(self.db_file.name)
+
+    def test_procurement_workspace_renders_and_preserves_filters(self):
+        response = self.client.get(
+            f"/dashboard/procurement?search=DASH-PO-1&supplier_id={self.supplier['id']}"
+            "&status=PARTIALLY_RECEIVED&pending_only=true&partially_received=true&page_size=10"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Procurement Workspace", response.text)
+        self.assertIn("DASH-PO-1", response.text)
+        self.assertIn("Dashboard Procurement Supplier", response.text)
+        self.assertIn('value="DASH-PO-1"', response.text)
+        self.assertIn(f'value="{self.supplier["id"]}"', response.text)
+        self.assertIn('value="PARTIALLY_RECEIVED" selected', response.text)
+        self.assertIn("checked", response.text)
+
+    def test_procurement_workspace_pagination(self):
+        response = self.client.get("/dashboard/procurement?page_size=1")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Page 1 of 3", response.text)
+        self.assertIn("Next", response.text)
+
+    def test_procurement_api_returns_json(self):
+        response = self.client.get("/dashboard/api/procurement?search=DASH-PO-1&page_size=1")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("items", data)
+        self.assertIn("summary", data)
+        self.assertIn("pagination", data)
+        self.assertEqual(data["items"][0]["reference_number"], "DASH-PO-1")
+        self.assertEqual(data["items"][0]["badge"], "partial")
+
+    def test_procurement_summary_and_activity_endpoints_return_json(self):
+        summary_response = self.client.get("/dashboard/api/procurement/summary")
+        self.assertEqual(summary_response.status_code, 200)
+        summary = summary_response.json()
+        self.assertEqual(summary["purchase_order_count"], 3)
+        self.assertEqual(summary["partial_count"], 1)
+        self.assertEqual(summary["cancelled_count"], 1)
+
+        activity_response = self.client.get("/dashboard/api/procurement/activity")
+        self.assertEqual(activity_response.status_code, 200)
+        activity = activity_response.json()
+        self.assertGreaterEqual(len(activity["purchase_orders"]), 3)
+        self.assertGreaterEqual(len(activity["receipts"]), 1)
+
+    def test_purchase_order_detail_handles_existing_and_missing_orders(self):
+        page_response = self.client.get(
+            f"/dashboard/procurement/purchase-orders/{self.partial_order_id}"
+        )
+        self.assertEqual(page_response.status_code, 200)
+        self.assertIn("DASH-PO-1", page_response.text)
+        self.assertIn("Ordered Items", page_response.text)
+        self.assertIn("Receipt History", page_response.text)
+
+        api_response = self.client.get(
+            f"/dashboard/api/procurement/purchase-orders/{self.partial_order_id}"
+        )
+        self.assertEqual(api_response.status_code, 200)
+        self.assertEqual(api_response.json()["purchase_order"]["reference_number"], "DASH-PO-1")
+
+        missing_page = self.client.get("/dashboard/procurement/purchase-orders/999999")
+        self.assertEqual(missing_page.status_code, 404)
+        self.assertIn("Purchase Order Not Found", missing_page.text)
+
+        missing_api = self.client.get("/dashboard/api/procurement/purchase-orders/999999")
+        self.assertEqual(missing_api.status_code, 200)
+        self.assertIsNone(missing_api.json()["purchase_order"])
+
+    def test_supplier_endpoints_and_detail_handle_existing_and_missing_suppliers(self):
+        suppliers_response = self.client.get("/dashboard/api/procurement/suppliers?search=Procurement")
+        self.assertEqual(suppliers_response.status_code, 200)
+        suppliers = suppliers_response.json()
+        self.assertIn(self.supplier["id"], {item["id"] for item in suppliers["items"]})
+
+        page_response = self.client.get(f"/dashboard/procurement/suppliers/{self.supplier['id']}")
+        self.assertEqual(page_response.status_code, 200)
+        self.assertIn("Dashboard Procurement Supplier", page_response.text)
+        self.assertIn("Recent Purchase Orders", page_response.text)
+
+        api_response = self.client.get(f"/dashboard/api/procurement/suppliers/{self.supplier['id']}")
+        self.assertEqual(api_response.status_code, 200)
+        self.assertEqual(api_response.json()["supplier"]["id"], self.supplier["id"])
+
+        missing_page = self.client.get("/dashboard/procurement/suppliers/999999")
+        self.assertEqual(missing_page.status_code, 404)
+        self.assertIn("Supplier Not Found", missing_page.text)
+
+        missing_api = self.client.get("/dashboard/api/procurement/suppliers/999999")
+        self.assertEqual(missing_api.status_code, 200)
+        self.assertIsNone(missing_api.json()["supplier"])
+
+
+class DashboardProcurementEmptyDatabaseTestCase(unittest.TestCase):
+    def setUp(self):
+        self.db_file = tempfile.NamedTemporaryFile(delete=False)
+        self.db_file.close()
+        os.environ["CARTHAGE_POS_DB"] = self.db_file.name
+
+        from app.database.db_manager import initialize_database
+
+        initialize_database()
+        self.client = TestClient(app)
+
+    def tearDown(self):
+        os.environ.pop("CARTHAGE_POS_DB", None)
+        os.unlink(self.db_file.name)
+
+    def test_procurement_workspace_empty_database_behavior(self):
+        response = self.client.get("/dashboard/procurement")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("No purchase orders match the selected filters.", response.text)
+
+        api_response = self.client.get("/dashboard/api/procurement")
+        self.assertEqual(api_response.status_code, 200)
+        self.assertEqual(api_response.json()["pagination"]["total"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1296,6 +1296,625 @@ def get_dashboard_customer_detail(customer_id, session=None):
     }
 
 
+PROCUREMENT_STATUSES = {
+    "DRAFT",
+    "SUBMITTED",
+    "PARTIALLY_RECEIVED",
+    "FULLY_RECEIVED",
+    "CANCELLED",
+}
+
+
+def _safe_bool(value):
+    return str(value or "").lower() in {"1", "true", "yes", "on"}
+
+
+def _empty_procurement_summary():
+    return {
+        "purchase_order_count": 0,
+        "pending_count": 0,
+        "partial_count": 0,
+        "completed_count": 0,
+        "cancelled_count": 0,
+        "supplier_count": 0,
+        "ordered_quantity": 0,
+        "received_quantity": 0,
+        "estimated_value": 0,
+        "estimated_value_display": money(0),
+    }
+
+
+def _normalize_procurement_filters(filters=None):
+    filters = filters or {}
+    status = _safe_text(filters.get("status")).upper()
+    if status not in PROCUREMENT_STATUSES:
+        status = ""
+    return {
+        "search": _safe_text(filters.get("search") or filters.get("q")),
+        "supplier_id": _safe_int(filters.get("supplier_id")),
+        "store_id": _safe_int(filters.get("store_id")),
+        "status": status,
+        "date_from": _safe_text(filters.get("date_from")),
+        "date_to": _safe_text(filters.get("date_to")),
+        "pending_only": _safe_bool(filters.get("pending_only")),
+        "partially_received": _safe_bool(filters.get("partially_received")),
+        "completed": _safe_bool(filters.get("completed")),
+        "cancelled": _safe_bool(filters.get("cancelled")),
+        "page": _safe_int(filters.get("page"), default=1, minimum=1),
+        "page_size": _safe_int(filters.get("page_size"), default=25, minimum=1, maximum=100),
+    }
+
+
+def _po_badge(status, ordered_quantity, received_quantity):
+    status = _safe_text(status).upper()
+    ordered = int(ordered_quantity or 0)
+    received = int(received_quantity or 0)
+    if status == "CANCELLED":
+        return "cancelled"
+    if status == "DRAFT":
+        return "draft"
+    if ordered > 0 and received >= ordered:
+        return "complete"
+    if received > 0 or status == "PARTIALLY_RECEIVED":
+        return "partial"
+    return "outstanding"
+
+
+def _procurement_query_parts(conn, filters, session=None):
+    supplier_columns = _columns(conn, "suppliers")
+    store_columns = _columns(conn, "stores")
+    user_columns = _columns(conn, "users")
+    has_items = _table_exists(conn, "purchase_order_items")
+
+    item_join = (
+        """LEFT JOIN (
+               SELECT purchase_order_id,
+                      COALESCE(SUM(ordered_quantity), 0) AS ordered_quantity,
+                      COALESCE(SUM(received_quantity), 0) AS received_quantity,
+                      COALESCE(SUM(subtotal), 0) AS estimated_value
+               FROM purchase_order_items
+               GROUP BY purchase_order_id
+           ) poi ON poi.purchase_order_id = po.id"""
+        if has_items else
+        """LEFT JOIN (
+               SELECT NULL AS purchase_order_id, 0 AS ordered_quantity,
+                      0 AS received_quantity, 0 AS estimated_value
+           ) poi ON 1 = 0"""
+    )
+    joins = [item_join]
+    if supplier_columns:
+        joins.append("LEFT JOIN suppliers s ON s.id = po.supplier_id")
+    if store_columns:
+        joins.append("LEFT JOIN stores st ON st.id = po.store_id")
+    if user_columns:
+        joins.append("LEFT JOIN users u ON u.id = po.created_by")
+
+    supplier_name = "COALESCE(s.name, 'Supplier #' || po.supplier_id)" if supplier_columns else "'Supplier #' || po.supplier_id"
+    store_name = "COALESCE(st.name, st.code, 'Store #' || po.store_id)" if store_columns else "'Store #' || po.store_id"
+    user_name = "COALESCE(u.full_name, u.username, 'User #' || po.created_by)" if user_columns else "'User #' || po.created_by"
+
+    select_fields = [
+        "po.id",
+        "po.supplier_id",
+        "po.store_id",
+        "po.reference_number",
+        "po.status",
+        "po.expected_delivery_date",
+        "po.created_at",
+        "po.submitted_at",
+        "po.cancelled_at",
+        "po.created_by",
+        "po.notes",
+        f"{supplier_name} AS supplier_name",
+        f"{store_name} AS store_name",
+        f"{user_name} AS created_by_name",
+        "COALESCE(poi.ordered_quantity, 0) AS ordered_quantity",
+        "COALESCE(poi.received_quantity, 0) AS received_quantity",
+        "COALESCE(poi.estimated_value, 0) AS estimated_value",
+    ]
+
+    where = ["1 = 1"]
+    params = []
+    scope = _dashboard_access_scope(session)
+    if scope["store_ids"]:
+        allowed_ids = [store_id for store_id in scope["store_ids"] if store_id is not None]
+        if allowed_ids:
+            where.append(f"po.store_id IN ({','.join('?' for _ in allowed_ids)})")
+            params.extend(allowed_ids)
+    if filters["supplier_id"] is not None:
+        where.append("po.supplier_id = ?")
+        params.append(filters["supplier_id"])
+    if filters["store_id"] is not None:
+        where.append("po.store_id = ?")
+        params.append(filters["store_id"])
+    if filters["status"]:
+        where.append("po.status = ?")
+        params.append(filters["status"])
+    if filters["date_from"]:
+        where.append("DATE(po.created_at) >= DATE(?)")
+        params.append(filters["date_from"])
+    if filters["date_to"]:
+        where.append("DATE(po.created_at) <= DATE(?)")
+        params.append(filters["date_to"])
+    if filters["pending_only"]:
+        where.append(
+            "po.status NOT IN ('FULLY_RECEIVED', 'CANCELLED') "
+            "AND COALESCE(poi.received_quantity, 0) < COALESCE(poi.ordered_quantity, 0)"
+        )
+    if filters["partially_received"]:
+        where.append(
+            "(po.status = 'PARTIALLY_RECEIVED' OR "
+            "(COALESCE(poi.received_quantity, 0) > 0 "
+            "AND COALESCE(poi.received_quantity, 0) < COALESCE(poi.ordered_quantity, 0)))"
+        )
+    if filters["completed"]:
+        where.append(
+            "(po.status = 'FULLY_RECEIVED' OR "
+            "(COALESCE(poi.ordered_quantity, 0) > 0 "
+            "AND COALESCE(poi.received_quantity, 0) >= COALESCE(poi.ordered_quantity, 0)))"
+        )
+    if filters["cancelled"]:
+        where.append("po.status = 'CANCELLED'")
+    if filters["search"]:
+        pattern = f"%{filters['search']}%"
+        terms = ["po.reference_number LIKE ?", "po.status LIKE ?", "po.notes LIKE ?"]
+        params.extend([pattern, pattern, pattern])
+        if supplier_columns:
+            terms.append("s.name LIKE ?")
+            params.append(pattern)
+        where.append(f"({' OR '.join(terms)})")
+
+    return {
+        "select": ", ".join(select_fields),
+        "joins": "\n".join(joins),
+        "where": " AND ".join(where),
+        "params": params,
+    }
+
+
+def _format_procurement_row(row):
+    ordered = int(row["ordered_quantity"] or 0)
+    received = int(row["received_quantity"] or 0)
+    remaining = max(ordered - received, 0)
+    value = float(row["estimated_value"] or 0)
+    badge = _po_badge(row["status"], ordered, received)
+    return {
+        "id": row["id"],
+        "purchase_order_id": row["id"],
+        "reference_number": row["reference_number"] or f"PO-{row['id']}",
+        "supplier_id": row["supplier_id"],
+        "supplier_name": row["supplier_name"],
+        "store_id": row["store_id"],
+        "store_name": row["store_name"],
+        "status": row["status"] or "DRAFT",
+        "status_label": _safe_text(row["status"]).replace("_", " ").title() or "Draft",
+        "badge": badge,
+        "expected_delivery_date": row["expected_delivery_date"] or "",
+        "created_at": row["created_at"] or "",
+        "submitted_at": row["submitted_at"] or "",
+        "cancelled_at": row["cancelled_at"] or "",
+        "created_by": row["created_by_name"] or "system",
+        "ordered_quantity": ordered,
+        "received_quantity": received,
+        "remaining_quantity": remaining,
+        "estimated_value": value,
+        "estimated_value_display": money(value),
+    }
+
+
+def _dashboard_procurement_summary_from_parts(conn, parts):
+    row = conn.execute(
+        f"""SELECT COUNT(*) AS purchase_order_count,
+                   COALESCE(SUM(CASE WHEN po.status NOT IN ('FULLY_RECEIVED', 'CANCELLED')
+                       AND COALESCE(poi.received_quantity, 0) < COALESCE(poi.ordered_quantity, 0)
+                       THEN 1 ELSE 0 END), 0) AS pending_count,
+                   COALESCE(SUM(CASE WHEN po.status = 'PARTIALLY_RECEIVED'
+                       OR (COALESCE(poi.received_quantity, 0) > 0
+                           AND COALESCE(poi.received_quantity, 0) < COALESCE(poi.ordered_quantity, 0))
+                       THEN 1 ELSE 0 END), 0) AS partial_count,
+                   COALESCE(SUM(CASE WHEN po.status = 'FULLY_RECEIVED'
+                       OR (COALESCE(poi.ordered_quantity, 0) > 0
+                           AND COALESCE(poi.received_quantity, 0) >= COALESCE(poi.ordered_quantity, 0))
+                       THEN 1 ELSE 0 END), 0) AS completed_count,
+                   COALESCE(SUM(CASE WHEN po.status = 'CANCELLED' THEN 1 ELSE 0 END), 0) AS cancelled_count,
+                   COALESCE(SUM(COALESCE(poi.ordered_quantity, 0)), 0) AS ordered_quantity,
+                   COALESCE(SUM(COALESCE(poi.received_quantity, 0)), 0) AS received_quantity,
+                   COALESCE(SUM(COALESCE(poi.estimated_value, 0)), 0) AS estimated_value
+            FROM purchase_orders po
+            {parts['joins']}
+            WHERE {parts['where']}""",
+        parts["params"],
+    ).fetchone()
+    supplier_count = count_table(conn, "suppliers")
+    value = float(row["estimated_value"] or 0)
+    return {
+        "purchase_order_count": int(row["purchase_order_count"] or 0),
+        "pending_count": int(row["pending_count"] or 0),
+        "partial_count": int(row["partial_count"] or 0),
+        "completed_count": int(row["completed_count"] or 0),
+        "cancelled_count": int(row["cancelled_count"] or 0),
+        "supplier_count": supplier_count,
+        "ordered_quantity": int(row["ordered_quantity"] or 0),
+        "received_quantity": int(row["received_quantity"] or 0),
+        "estimated_value": value,
+        "estimated_value_display": money(value),
+    }
+
+
+def get_dashboard_procurement_summary(filters=None, session=None):
+    filters = _normalize_procurement_filters(filters)
+    with get_connection() as conn:
+        if not _table_exists(conn, "purchase_orders"):
+            return _empty_procurement_summary()
+        parts = _procurement_query_parts(conn, filters, session=session)
+        return _dashboard_procurement_summary_from_parts(conn, parts)
+
+
+def list_dashboard_procurement(filters=None, session=None):
+    filters = _normalize_procurement_filters(filters)
+    if filters["date_from"] and filters["date_to"] and filters["date_from"] > filters["date_to"]:
+        filters["date_from"], filters["date_to"] = filters["date_to"], filters["date_from"]
+    with get_connection() as conn:
+        if not _table_exists(conn, "purchase_orders"):
+            total = 0
+            rows = []
+            summary = _empty_procurement_summary()
+        else:
+            parts = _procurement_query_parts(conn, filters, session=session)
+            total = conn.execute(
+                f"""SELECT COUNT(*)
+                    FROM purchase_orders po
+                    {parts['joins']}
+                    WHERE {parts['where']}""",
+                parts["params"],
+            ).fetchone()[0]
+            total_pages = max(1, ceil(total / filters["page_size"]))
+            filters["page"] = min(filters["page"], total_pages)
+            offset = (filters["page"] - 1) * filters["page_size"]
+            rows = conn.execute(
+                f"""SELECT {parts['select']}
+                    FROM purchase_orders po
+                    {parts['joins']}
+                    WHERE {parts['where']}
+                    ORDER BY COALESCE(po.submitted_at, po.created_at) DESC, po.id DESC
+                    LIMIT ? OFFSET ?""",
+                [*parts["params"], filters["page_size"], offset],
+            ).fetchall()
+            summary = _dashboard_procurement_summary_from_parts(conn, parts)
+
+    total_pages = max(1, ceil(total / filters["page_size"]))
+    page = filters["page"]
+    return {
+        "items": [_format_procurement_row(row) for row in rows],
+        "summary": summary,
+        "filters": filters,
+        "pagination": {
+            "page": page,
+            "page_size": filters["page_size"],
+            "total": total,
+            "total_pages": total_pages,
+            "has_previous": page > 1,
+            "has_next": page < total_pages,
+            "previous_page": page - 1 if page > 1 else None,
+            "next_page": page + 1 if page < total_pages else None,
+        },
+    }
+
+
+def get_dashboard_purchase_order_detail(purchase_order_id, session=None):
+    try:
+        purchase_order_id = int(purchase_order_id)
+    except (TypeError, ValueError):
+        return None
+    with get_connection() as conn:
+        if not _table_exists(conn, "purchase_orders"):
+            return None
+        filters = _normalize_procurement_filters({"page": 1, "page_size": 1})
+        parts = _procurement_query_parts(conn, filters, session=session)
+        row = conn.execute(
+            f"""SELECT {parts['select']}
+                FROM purchase_orders po
+                {parts['joins']}
+                WHERE po.id = ?""",
+            (purchase_order_id,),
+        ).fetchone()
+        if not row:
+            return None
+        purchase_order = _format_procurement_row(row)
+        purchase_order["notes"] = row["notes"] or ""
+
+        supplier = None
+        if _table_exists(conn, "suppliers"):
+            supplier_row = conn.execute(
+                "SELECT * FROM suppliers WHERE id = ?",
+                (purchase_order["supplier_id"],),
+            ).fetchone()
+            supplier = dict(supplier_row) if supplier_row else None
+
+        items = []
+        if _table_exists(conn, "purchase_order_items"):
+            product_join = "LEFT JOIN products p ON p.id = poi.product_id" if _table_exists(conn, "products") else ""
+            product_fields = "COALESCE(p.sku, '') AS sku, COALESCE(p.name, 'Product #' || poi.product_id) AS product_name" if _table_exists(conn, "products") else "'' AS sku, 'Product #' || poi.product_id AS product_name"
+            items = [
+                {
+                    **dict(item),
+                    "remaining_quantity": int(item["ordered_quantity"] or 0) - int(item["received_quantity"] or 0),
+                    "unit_cost_display": money(item["unit_cost"]),
+                    "subtotal_display": money(item["subtotal"]),
+                }
+                for item in conn.execute(
+                    f"""SELECT poi.*, {product_fields}
+                        FROM purchase_order_items poi
+                        {product_join}
+                        WHERE poi.purchase_order_id = ?
+                        ORDER BY poi.id""",
+                    (purchase_order_id,),
+                ).fetchall()
+            ]
+
+        receipts = []
+        if _table_exists(conn, "purchase_receipts"):
+            receipt_items_join = (
+                "LEFT JOIN purchase_receipt_items pri ON pri.receipt_id = pr.id"
+                if _table_exists(conn, "purchase_receipt_items") else
+                "LEFT JOIN (SELECT NULL AS receipt_id, 0 AS quantity, 0 AS subtotal) pri ON 1 = 0"
+            )
+            receipts = [
+                {
+                    **dict(receipt),
+                    "quantity_received": int(receipt["quantity_received"] or 0),
+                    "receipt_value": float(receipt["receipt_value"] or 0),
+                    "receipt_value_display": money(receipt["receipt_value"]),
+                }
+                for receipt in conn.execute(
+                    f"""SELECT pr.id, pr.receipt_number, pr.notes, pr.received_at,
+                              COALESCE(u.full_name, u.username, 'system') AS received_by,
+                              COALESCE(SUM(pri.quantity), 0) AS quantity_received,
+                              COALESCE(SUM(pri.subtotal), 0) AS receipt_value
+                       FROM purchase_receipts pr
+                       LEFT JOIN users u ON u.id = pr.received_by
+                       {receipt_items_join}
+                       WHERE pr.purchase_order_id = ?
+                       GROUP BY pr.id
+                       ORDER BY pr.received_at DESC, pr.id DESC""",
+                    (purchase_order_id,),
+                ).fetchall()
+            ]
+    return {
+        "purchase_order": purchase_order,
+        "supplier": supplier,
+        "items": items,
+        "receipts": receipts,
+        "actions": [
+            {"label": "Purchase Order", "enabled": False},
+            {"label": "Goods Received Note", "enabled": False},
+            {"label": "Print", "enabled": False},
+        ],
+    }
+
+
+def list_dashboard_suppliers(filters=None, session=None):
+    filters = filters or {}
+    normalized = {
+        "search": _safe_text(filters.get("search") or filters.get("q")),
+        "active": _safe_text(filters.get("active") or "all").lower(),
+        "page": _safe_int(filters.get("page"), default=1, minimum=1),
+        "page_size": _safe_int(filters.get("page_size"), default=25, minimum=1, maximum=100),
+    }
+    if normalized["active"] not in {"active", "inactive", "all"}:
+        normalized["active"] = "all"
+    with get_connection() as conn:
+        if not _table_exists(conn, "suppliers"):
+            total = 0
+            rows = []
+        else:
+            where = ["1 = 1"]
+            params = []
+            if normalized["active"] == "active":
+                where.append("COALESCE(s.is_active, 1) = 1")
+            elif normalized["active"] == "inactive":
+                where.append("COALESCE(s.is_active, 1) = 0")
+            if normalized["search"]:
+                pattern = f"%{normalized['search']}%"
+                where.append("(s.name LIKE ? OR s.phone LIKE ? OR s.email LIKE ? OR s.address LIKE ?)")
+                params.extend([pattern, pattern, pattern, pattern])
+            where_clause = " AND ".join(where)
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM suppliers s WHERE {where_clause}", params
+            ).fetchone()[0]
+            total_pages = max(1, ceil(total / normalized["page_size"]))
+            normalized["page"] = min(normalized["page"], total_pages)
+            offset = (normalized["page"] - 1) * normalized["page_size"]
+            if _table_exists(conn, "purchase_orders") and _table_exists(conn, "purchase_order_items"):
+                rows = conn.execute(
+                    f"""SELECT s.*,
+                               COALESCE(COUNT(po.id), 0) AS purchase_order_count,
+                               COALESCE(SUM(CASE WHEN po.status NOT IN ('FULLY_RECEIVED', 'CANCELLED') THEN 1 ELSE 0 END), 0) AS outstanding_orders,
+                               COALESCE(SUM(po_totals.estimated_value), 0) AS purchase_value,
+                               MAX(po.created_at) AS last_purchase_date
+                        FROM suppliers s
+                        LEFT JOIN purchase_orders po ON po.supplier_id = s.id
+                        LEFT JOIN (
+                            SELECT purchase_order_id, COALESCE(SUM(subtotal), 0) AS estimated_value
+                            FROM purchase_order_items
+                            GROUP BY purchase_order_id
+                        ) po_totals ON po_totals.purchase_order_id = po.id
+                        WHERE {where_clause}
+                        GROUP BY s.id
+                        ORDER BY s.name COLLATE NOCASE
+                        LIMIT ? OFFSET ?""",
+                    [*params, normalized["page_size"], offset],
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"""SELECT s.*, 0 AS purchase_order_count, 0 AS outstanding_orders,
+                               0 AS purchase_value, NULL AS last_purchase_date
+                        FROM suppliers s
+                        WHERE {where_clause}
+                        ORDER BY s.name COLLATE NOCASE
+                        LIMIT ? OFFSET ?""",
+                    [*params, normalized["page_size"], offset],
+                ).fetchall()
+    page = normalized["page"]
+    total_pages = max(1, ceil(total / normalized["page_size"]))
+    return {
+        "items": [_format_supplier_row(row) for row in rows],
+        "filters": normalized,
+        "pagination": {
+            "page": page,
+            "page_size": normalized["page_size"],
+            "total": total,
+            "total_pages": total_pages,
+            "has_previous": page > 1,
+            "has_next": page < total_pages,
+            "previous_page": page - 1 if page > 1 else None,
+            "next_page": page + 1 if page < total_pages else None,
+        },
+    }
+
+
+def _format_supplier_row(row):
+    value = float(row["purchase_value"] or 0)
+    return {
+        "id": row["id"],
+        "name": row["name"] or f"Supplier #{row['id']}",
+        "phone": row["phone"] or "",
+        "email": row["email"] or "",
+        "address": row["address"] or "",
+        "is_active": bool(row["is_active"]),
+        "active_status": "active" if row["is_active"] else "inactive",
+        "purchase_order_count": int(row["purchase_order_count"] or 0),
+        "outstanding_orders": int(row["outstanding_orders"] or 0),
+        "purchase_value": value,
+        "purchase_value_display": money(value),
+        "last_purchase_date": row["last_purchase_date"] or "",
+    }
+
+
+def get_dashboard_supplier_detail(supplier_id, session=None):
+    try:
+        supplier_id = int(supplier_id)
+    except (TypeError, ValueError):
+        return None
+    with get_connection() as conn:
+        if not _table_exists(conn, "suppliers"):
+            return None
+        if _table_exists(conn, "purchase_orders") and _table_exists(conn, "purchase_order_items"):
+            row = conn.execute(
+                """SELECT s.*,
+                          COALESCE(COUNT(po.id), 0) AS purchase_order_count,
+                          COALESCE(SUM(CASE WHEN po.status NOT IN ('FULLY_RECEIVED', 'CANCELLED') THEN 1 ELSE 0 END), 0) AS outstanding_orders,
+                          COALESCE(SUM(po_totals.estimated_value), 0) AS purchase_value,
+                          MAX(po.created_at) AS last_purchase_date
+                   FROM suppliers s
+                   LEFT JOIN purchase_orders po ON po.supplier_id = s.id
+                   LEFT JOIN (
+                       SELECT purchase_order_id, COALESCE(SUM(subtotal), 0) AS estimated_value
+                       FROM purchase_order_items
+                       GROUP BY purchase_order_id
+                   ) po_totals ON po_totals.purchase_order_id = po.id
+                   WHERE s.id = ?
+                   GROUP BY s.id""",
+                (supplier_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """SELECT s.*, 0 AS purchase_order_count, 0 AS outstanding_orders,
+                          0 AS purchase_value, NULL AS last_purchase_date
+                   FROM suppliers s
+                   WHERE s.id = ?""",
+                (supplier_id,),
+            ).fetchone()
+        if not row:
+            return None
+        supplier = _format_supplier_row(row)
+        recent_orders = []
+        if _table_exists(conn, "purchase_orders"):
+            filters = _normalize_procurement_filters({"supplier_id": supplier_id, "page": 1, "page_size": 10})
+            parts = _procurement_query_parts(conn, filters, session=session)
+            recent_orders = [
+                _format_procurement_row(item)
+                for item in conn.execute(
+                    f"""SELECT {parts['select']}
+                        FROM purchase_orders po
+                        {parts['joins']}
+                        WHERE {parts['where']}
+                        ORDER BY po.created_at DESC, po.id DESC
+                        LIMIT 10""",
+                    parts["params"],
+                ).fetchall()
+            ]
+    return {
+        "supplier": supplier,
+        "recent_purchase_orders": recent_orders,
+        "performance": {
+            "purchase_order_count": supplier["purchase_order_count"],
+            "outstanding_orders": supplier["outstanding_orders"],
+            "purchase_value": supplier["purchase_value"],
+            "purchase_value_display": supplier["purchase_value_display"],
+            "last_purchase_date": supplier["last_purchase_date"],
+        },
+        "actions": [
+            {"label": "Supplier Statement", "enabled": False},
+            {"label": "Export", "enabled": False},
+            {"label": "Print", "enabled": False},
+        ],
+    }
+
+
+def get_dashboard_procurement_activity(limit=25, session=None):
+    limit = _safe_int(limit, default=25, minimum=1, maximum=100)
+    with get_connection() as conn:
+        if not _table_exists(conn, "purchase_orders"):
+            return {"purchase_orders": [], "receipts": []}
+        filters = _normalize_procurement_filters({"page": 1, "page_size": limit})
+        parts = _procurement_query_parts(conn, filters, session=session)
+        orders = [
+            _format_procurement_row(row)
+            for row in conn.execute(
+                f"""SELECT {parts['select']}
+                    FROM purchase_orders po
+                    {parts['joins']}
+                    WHERE {parts['where']}
+                    ORDER BY po.created_at DESC, po.id DESC
+                    LIMIT ?""",
+                [*parts["params"], limit],
+            ).fetchall()
+        ]
+        receipts = []
+        if _table_exists(conn, "purchase_receipts"):
+            receipt_items_join = (
+                "LEFT JOIN purchase_receipt_items pri ON pri.receipt_id = pr.id"
+                if _table_exists(conn, "purchase_receipt_items") else
+                "LEFT JOIN (SELECT NULL AS receipt_id, 0 AS quantity, 0 AS subtotal) pri ON 1 = 0"
+            )
+            receipts = [
+                {
+                    **dict(row),
+                    "receipt_value": float(row["receipt_value"] or 0),
+                    "receipt_value_display": money(row["receipt_value"]),
+                }
+                for row in conn.execute(
+                    f"""SELECT pr.id, pr.receipt_number, pr.purchase_order_id, pr.received_at,
+                              pr.notes, po.reference_number,
+                              COALESCE(s.name, 'Supplier #' || po.supplier_id) AS supplier_name,
+                              COALESCE(u.full_name, u.username, 'system') AS received_by,
+                              COALESCE(SUM(pri.quantity), 0) AS quantity_received,
+                              COALESCE(SUM(pri.subtotal), 0) AS receipt_value
+                       FROM purchase_receipts pr
+                       JOIN purchase_orders po ON po.id = pr.purchase_order_id
+                       LEFT JOIN suppliers s ON s.id = po.supplier_id
+                       LEFT JOIN users u ON u.id = pr.received_by
+                       {receipt_items_join}
+                       GROUP BY pr.id
+                       ORDER BY pr.received_at DESC, pr.id DESC
+                       LIMIT ?""",
+                    (limit,),
+                ).fetchall()
+            ]
+    return {"purchase_orders": orders, "receipts": receipts}
+
+
 def get_dashboard_summary():
     today = date.today().isoformat()
 

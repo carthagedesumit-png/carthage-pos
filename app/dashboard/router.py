@@ -10,13 +10,19 @@ from app.dashboard.services.dashboard_service import (
     get_dashboard_inventory_valuation,
     get_dashboard_low_stock_inventory,
     get_dashboard_product_detail,
+    get_dashboard_procurement_activity,
+    get_dashboard_procurement_summary,
+    get_dashboard_purchase_order_detail,
     get_dashboard_sale_detail,
     get_dashboard_sales_summary,
     get_dashboard_summary,
+    get_dashboard_supplier_detail,
     get_dashboard_top_customers,
     list_dashboard_customers,
     list_dashboard_inventory,
+    list_dashboard_procurement,
     list_dashboard_sales,
+    list_dashboard_suppliers,
 )
 
 templates = Jinja2Templates(directory="app/dashboard/templates")
@@ -301,24 +307,110 @@ def dashboard_customer_detail(request: Request, customer_id: int):
 
 
 @router.get("/procurement", response_class=HTMLResponse)
-def dashboard_procurement(request: Request):
-    return render_workspace(
-        request,
-        active_page="procurement",
-        page_title="Procurement Workspace",
-        page_subtitle="Track suppliers, purchase orders, receipts, and replenishment.",
-        cards=[
-            {"label": "Pending POs", "value": "0"},
-            {"label": "Suppliers", "value": "0"},
-            {"label": "Awaiting Receipt", "value": "0"},
-        ],
-        main_panel_title="Procurement Control",
-        main_panel_text="Purchase order tracking, supplier performance, and receiving workflows will live here.",
-        steps=[
-            {"title": "Purchase orders", "text": "Add PO list and status filtering."},
-            {"title": "Receiving", "text": "Add goods received review."},
-            {"title": "Suppliers", "text": "Add supplier activity dashboard."},
-        ],
+def dashboard_procurement(
+    request: Request,
+    search: str = "",
+    supplier_id: int | None = Query(default=None),
+    store_id: int | None = Query(default=None),
+    status: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    pending_only: bool = False,
+    partially_received: bool = False,
+    completed: bool = False,
+    cancelled: bool = False,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+):
+    result = list_dashboard_procurement(
+        {
+            "search": search,
+            "supplier_id": supplier_id,
+            "store_id": store_id,
+            "status": status,
+            "date_from": date_from,
+            "date_to": date_to,
+            "pending_only": pending_only,
+            "partially_received": partially_received,
+            "completed": completed,
+            "cancelled": cancelled,
+            "page": page,
+            "page_size": page_size,
+        }
+    )
+    return templates.TemplateResponse(
+        "procurement.html",
+        {
+            "request": request,
+            "title": "Procurement Workspace - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "procurement",
+            "page_title": "Procurement Workspace",
+            "page_subtitle": "Review suppliers, purchase orders, receiving progress, and replenishment exposure.",
+            "purchase_orders": result["items"],
+            "summary": result["summary"],
+            "filters": result["filters"],
+            "pagination": result["pagination"],
+            "status_filters": ["", "DRAFT", "SUBMITTED", "PARTIALLY_RECEIVED", "FULLY_RECEIVED", "CANCELLED"],
+        },
+    )
+
+
+@router.get("/procurement/purchase-orders/{purchase_order_id}", response_class=HTMLResponse)
+def dashboard_purchase_order_detail(request: Request, purchase_order_id: int):
+    detail = get_dashboard_purchase_order_detail(purchase_order_id)
+    if not detail:
+        return templates.TemplateResponse(
+            "purchase_order_detail.html",
+            {
+                "request": request,
+                "title": "Purchase Order Not Found - Carthage Business Operating System",
+                "header": get_header(),
+                "active_page": "procurement",
+                "detail": None,
+                "purchase_order_id": purchase_order_id,
+            },
+            status_code=404,
+        )
+    return templates.TemplateResponse(
+        "purchase_order_detail.html",
+        {
+            "request": request,
+            "title": f"{detail['purchase_order']['reference_number']} - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "procurement",
+            "detail": detail,
+            "purchase_order_id": purchase_order_id,
+        },
+    )
+
+
+@router.get("/procurement/suppliers/{supplier_id}", response_class=HTMLResponse)
+def dashboard_supplier_detail(request: Request, supplier_id: int):
+    detail = get_dashboard_supplier_detail(supplier_id)
+    if not detail:
+        return templates.TemplateResponse(
+            "supplier_detail.html",
+            {
+                "request": request,
+                "title": "Supplier Not Found - Carthage Business Operating System",
+                "header": get_header(),
+                "active_page": "procurement",
+                "detail": None,
+                "supplier_id": supplier_id,
+            },
+            status_code=404,
+        )
+    return templates.TemplateResponse(
+        "supplier_detail.html",
+        {
+            "request": request,
+            "title": f"{detail['supplier']['name']} - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "procurement",
+            "detail": detail,
+            "supplier_id": supplier_id,
+        },
     )
 
 
@@ -602,6 +694,112 @@ def dashboard_customer_detail_api(customer_id: int):
             "customer": None,
             "profile": None,
             "activity": {"recent_sales": [], "wallet": [], "loyalty": [], "credit": []},
+            "actions": [],
+        }
+    return detail
+
+
+@router.get("/api/procurement")
+def dashboard_procurement_api(
+    search: str = "",
+    supplier_id: int | None = Query(default=None),
+    store_id: int | None = Query(default=None),
+    status: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    pending_only: bool = False,
+    partially_received: bool = False,
+    completed: bool = False,
+    cancelled: bool = False,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+):
+    return list_dashboard_procurement(
+        {
+            "search": search,
+            "supplier_id": supplier_id,
+            "store_id": store_id,
+            "status": status,
+            "date_from": date_from,
+            "date_to": date_to,
+            "pending_only": pending_only,
+            "partially_received": partially_received,
+            "completed": completed,
+            "cancelled": cancelled,
+            "page": page,
+            "page_size": page_size,
+        }
+    )
+
+
+@router.get("/api/procurement/summary")
+def dashboard_procurement_summary_api(
+    search: str = "",
+    supplier_id: int | None = Query(default=None),
+    store_id: int | None = Query(default=None),
+    status: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    pending_only: bool = False,
+    partially_received: bool = False,
+    completed: bool = False,
+    cancelled: bool = False,
+):
+    return get_dashboard_procurement_summary(
+        {
+            "search": search,
+            "supplier_id": supplier_id,
+            "store_id": store_id,
+            "status": status,
+            "date_from": date_from,
+            "date_to": date_to,
+            "pending_only": pending_only,
+            "partially_received": partially_received,
+            "completed": completed,
+            "cancelled": cancelled,
+        }
+    )
+
+
+@router.get("/api/procurement/activity")
+def dashboard_procurement_activity_api(limit: int = Query(default=25, ge=1, le=100)):
+    return get_dashboard_procurement_activity(limit=limit)
+
+
+@router.get("/api/procurement/suppliers")
+def dashboard_procurement_suppliers_api(
+    search: str = "",
+    active: str = "all",
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+):
+    return list_dashboard_suppliers(
+        {"search": search, "active": active, "page": page, "page_size": page_size}
+    )
+
+
+@router.get("/api/procurement/suppliers/{supplier_id}")
+def dashboard_procurement_supplier_detail_api(supplier_id: int):
+    detail = get_dashboard_supplier_detail(supplier_id)
+    if not detail:
+        return {
+            "supplier": None,
+            "recent_purchase_orders": [],
+            "performance": {},
+            "actions": [],
+        }
+    return detail
+
+
+@router.get("/api/procurement/purchase-orders/{purchase_order_id}")
+def dashboard_procurement_purchase_order_api(purchase_order_id: int):
+    detail = get_dashboard_purchase_order_detail(purchase_order_id)
+    if not detail:
+        return {
+            "purchase_order": None,
+            "supplier": None,
+            "items": [],
+            "receipts": [],
             "actions": [],
         }
     return detail

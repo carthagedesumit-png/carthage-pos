@@ -423,6 +423,8 @@ body {
 .inventory-table-panel,
 .crm-workspace,
 .crm-table-panel,
+.procurement-workspace,
+.procurement-table-panel,
 .receipt-panel {
     margin-top: 24px;
 }
@@ -532,9 +534,27 @@ body {
     min-width: 1240px;
 }
 
+.procurement-table {
+    min-width: 1420px;
+}
+
+.procurement-detail-table {
+    min-width: 940px;
+}
+
 .crm-table td small {
     display: block;
     margin-top: 4px;
+}
+
+.table-link {
+    color: #1d4ed8;
+    font-weight: 800;
+    text-decoration: none;
+}
+
+.table-link:hover {
+    text-decoration: underline;
 }
 
 .badge {
@@ -571,9 +591,22 @@ body {
 }
 
 .badge-active,
-.badge-in-stock {
+.badge-in-stock,
+.badge-complete {
     background: #dcfce7;
     color: #166534;
+}
+
+.badge-outstanding,
+.badge-partial,
+.badge-draft {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.badge-cancelled {
+    background: #fee2e2;
+    color: #991b1b;
 }
 
 .badge-wallet,

@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{% if not detail %}
+<section class="hero">
+    <div>
+        <h1>Purchase Order Not Found</h1>
+        <p>No purchase order record is available for ID {{ purchase_order_id }}.</p>
+        <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <a class="hero-link" href="/dashboard/procurement">Back to Procurement</a>
+    </div>
+</section>
+{% else %}
+<section class="hero">
+    <div>
+        <h1>{{ detail.purchase_order.reference_number }}</h1>
+        <p>{{ detail.purchase_order.supplier_name }} &middot; {{ detail.purchase_order.store_name }} &middot; {{ detail.purchase_order.status_label }}</p>
+        <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <span class="status success">{{ detail.purchase_order.estimated_value_display }} estimated</span>
+        <span class="status warning">{{ detail.purchase_order.remaining_quantity }} remaining</span>
+        <a class="hero-link" href="/dashboard/procurement">Back to Procurement</a>
+    </div>
+</section>
+
+<section class="cards">
+    <div class="card accent-blue">
+        <span>Ordered Qty</span>
+        <strong>{{ detail.purchase_order.ordered_quantity }}</strong>
+    </div>
+    <div class="card accent-green">
+        <span>Received Qty</span>
+        <strong>{{ detail.purchase_order.received_quantity }}</strong>
+    </div>
+    <div class="card accent-amber">
+        <span>Remaining Qty</span>
+        <strong>{{ detail.purchase_order.remaining_quantity }}</strong>
+    </div>
+    <div class="card accent-red">
+        <span>Status</span>
+        <strong>{{ detail.purchase_order.status_label }}</strong>
+    </div>
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>Purchase Order Header</h2>
+        <div class="detail-list">
+            <span>Reference <strong>{{ detail.purchase_order.reference_number }}</strong></span>
+            <span>Status <strong>{{ detail.purchase_order.status_label }}</strong></span>
+            <span>Expected Delivery <strong>{{ detail.purchase_order.expected_delivery_date or "No date" }}</strong></span>
+            <span>Created <strong>{{ detail.purchase_order.created_at or "Unknown" }}</strong></span>
+            <span>Submitted <strong>{{ detail.purchase_order.submitted_at or "Not submitted" }}</strong></span>
+            <span>Created By <strong>{{ detail.purchase_order.created_by }}</strong></span>
+            <span>Notes <strong>{{ detail.purchase_order.notes or "No notes" }}</strong></span>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Supplier Details</h2>
+        <div class="detail-list">
+            <span>Name <strong>{{ detail.supplier.name if detail.supplier else detail.purchase_order.supplier_name }}</strong></span>
+            <span>Phone <strong>{{ detail.supplier.phone if detail.supplier and detail.supplier.phone else "No phone" }}</strong></span>
+            <span>Email <strong>{{ detail.supplier.email if detail.supplier and detail.supplier.email else "No email" }}</strong></span>
+            <span>Address <strong>{{ detail.supplier.address if detail.supplier and detail.supplier.address else "No address" }}</strong></span>
+        </div>
+    </div>
+</section>
+
+<section class="panel receipt-panel">
+    <h2>Ordered Items</h2>
+    {% if detail["items"] %}
+    <div class="table-scroll">
+        <table class="table procurement-detail-table">
+            <thead>
+                <tr>
+                    <th>SKU</th>
+                    <th>Product</th>
+                    <th>Ordered</th>
+                    <th>Received</th>
+                    <th>Remaining</th>
+                    <th>Unit Cost</th>
+                    <th>Line Value</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in detail["items"] %}
+                <tr>
+                    <td>{{ item.sku or "No SKU" }}</td>
+                    <td>{{ item.product_name }}</td>
+                    <td>{{ item.ordered_quantity }}</td>
+                    <td>{{ item.received_quantity }}</td>
+                    <td>{{ item.remaining_quantity }}</td>
+                    <td>{{ item.unit_cost_display }}</td>
+                    <td><strong>{{ item.subtotal_display }}</strong></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No line items are recorded for this purchase order.</p>
+    {% endif %}
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>Receipt History</h2>
+        {% if detail.receipts %}
+        <div class="detail-list">
+            {% for receipt in detail.receipts %}
+            <span>{{ receipt.receipt_number }} &middot; {{ receipt.received_at }} <strong>{{ receipt.quantity_received }} units &middot; {{ receipt.receipt_value_display }}</strong></span>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No goods received notes are recorded.</p>
+        {% endif %}
+    </div>
+
+    <div class="panel">
+        <h2>Document Actions</h2>
+        <div class="quick-actions label-actions">
+            {% for action in detail.actions %}
+            <a class="disabled-action" href="#">{{ action.label }}</a>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+{% endif %}
+
+{% endblock %}

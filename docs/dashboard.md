@@ -152,6 +152,68 @@ The dashboard exposes lightweight JSON endpoints for CRM workspace data:
 These endpoints use dashboard read helpers and return safe empty structures when
 customer, sales, wallet, loyalty, or credit tables are unavailable.
 
+## Procurement Workspace
+
+`GET /dashboard/procurement` renders the Procurement Workspace V1 management
+page. It is a read-only supplier and purchase management portal for reviewing
+purchase orders, receiving progress, supplier exposure, and replenishment
+activity.
+
+The page includes:
+
+- Summary cards for purchase orders, estimated purchase value, pending receipt
+  count, and supplier count.
+- A responsive purchase order table with reference number, supplier, store,
+  status, expected delivery date, created/submitted date, ordered quantity,
+  received quantity, remaining quantity, estimated value, creator, and
+  outstanding/partial/complete/cancelled badges.
+- Filter controls that preserve selected query parameters.
+- Empty-state handling and previous/next pagination.
+- Detail actions for purchase order and supplier drill-down pages.
+
+Supported query parameters:
+
+- `search`
+- `supplier_id`
+- `store_id`
+- `status` with `DRAFT`, `SUBMITTED`, `PARTIALLY_RECEIVED`,
+  `FULLY_RECEIVED`, or `CANCELLED`
+- `date_from`
+- `date_to`
+- `pending_only`
+- `partially_received`
+- `completed`
+- `cancelled`
+- `page`
+- `page_size`
+
+`GET /dashboard/procurement/purchase-orders/{purchase_order_id}` renders a
+read-only purchase order detail page with header fields, supplier contact
+details, ordered items, received quantities, remaining quantities, unit costs,
+line values, receipt history, goods received note references where available,
+and purchase order/GRN/print action placeholders.
+
+`GET /dashboard/procurement/suppliers/{supplier_id}` renders a read-only
+supplier detail page with supplier profile, contact information, active state,
+total purchase orders, outstanding purchase orders, total purchase value, last
+purchase date, recent purchase orders, and statement/export/print action
+placeholders.
+
+## Procurement JSON Endpoints
+
+The dashboard exposes lightweight JSON endpoints for the procurement workspace:
+
+- `GET /dashboard/api/procurement`
+- `GET /dashboard/api/procurement/summary`
+- `GET /dashboard/api/procurement/activity`
+- `GET /dashboard/api/procurement/purchase-orders/{purchase_order_id}`
+- `GET /dashboard/api/procurement/suppliers`
+- `GET /dashboard/api/procurement/suppliers/{supplier_id}`
+
+These endpoints use dashboard-specific read helpers and return safe empty
+structures when supplier, purchase order, purchase order item, receipt, product,
+store, or user tables are unavailable.
+
 ## Authorization Foundation
 
 The current dashboard has a placeholder identity boundary in the dashboard
@@ -170,13 +232,18 @@ activation documents, bearer tokens, or payment credentials.
 - Sales workspace actions are read-only.
 - Inventory workspace actions are read-only.
 - CRM workspace actions are read-only.
+- Procurement workspace actions are read-only.
 - Full dashboard browser authentication is not enabled yet.
 - Store, cashier, and customer filters currently accept IDs instead of lookup
   selectors.
 - Store, category, and supplier inventory filters currently accept IDs instead
   of lookup selectors.
+- Store and supplier procurement filters currently accept IDs instead of lookup
+  selectors.
 - Label print actions are placeholders; full label workflow remains in barcode
   and hardware services.
 - Statement, print, and export actions in CRM are placeholders.
+- Purchase order, goods received note, supplier statement, export, and print
+  actions in Procurement are placeholders.
 - Receipt preview availability depends on the existing document service and the
   persisted sale schema.

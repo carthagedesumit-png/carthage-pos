@@ -41,7 +41,9 @@ Dependencies flow inward:
 - `app/dashboard`: browser management workspaces, dashboard-specific read
   models, BI widgets, and lightweight JSON endpoints. Dashboard routes delegate
   sales, inventory, customer, wallet, loyalty, credit, barcode, reporting, and
-  document behavior to service helpers and domain modules.
+  document behavior to service helpers and domain modules. Procurement dashboard
+  reads stay separate from supplier, purchase order, receipt, inventory costing,
+  and receiving mutations owned by `app/procurement`.
 - `app/barcodes`: normalized identifiers, label rendering/printing, scanner
   lookup, and barcode operational reports.
 - `app/backup`: SQLite snapshots, manifests, verification, atomic restore,
