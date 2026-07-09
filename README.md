@@ -65,7 +65,9 @@ Workspace at `/dashboard/procurement` provide read-only management filters,
 pagination, detail pages, and lightweight dashboard JSON endpoints. The Reports
 & Analytics Workspace at `/dashboard/reports` surfaces CBOS executive
 intelligence with sales, product, cashier, store, customer, inventory,
-procurement, and refund analytics. See
+procurement, and refund analytics. The Administration Workspace at
+`/dashboard/system` centralizes read-only system control views for users,
+licensing, backups, deployment, hardware, and sanitized configuration. See
 [`docs/dashboard.md`](docs/dashboard.md).
 
 Hardware configuration and mock-device testing are documented in

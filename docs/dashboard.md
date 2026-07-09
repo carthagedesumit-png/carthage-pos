@@ -276,6 +276,65 @@ The export endpoint currently returns a `coming_soon` placeholder for `csv`,
 `excel`, `pdf`, and `print` formats. Full export generation remains outside
 Reports Workspace V1.
 
+## Administration Workspace
+
+`GET /dashboard/system` renders the Administration Workspace V1 system control
+center. It is a read-only administrative portal for administrators and business
+owners to review users, licensing, backups, deployment, hardware, system health,
+and sanitized configuration.
+
+The page includes:
+
+- Summary cards for API, license, backup, and user status.
+- Application version, database version, deployment status, hardware status,
+  active/inactive users, store count, and configuration summary.
+- Navigation to user management, licensing, backups, deployment, hardware, and
+  configuration detail pages.
+- Read-only action placeholders for user creation, backup creation, deployment
+  verification, and hardware testing.
+
+User management foundations are available at:
+
+- `GET /dashboard/system/users`
+- `GET /dashboard/system/users/{user_id}`
+
+The user list supports `search`, `role`, `active`, `page`, and `page_size`
+filters. User pages show non-sensitive account details only: username, full
+name, role, active/inactive status, home/assigned stores, last login, and
+created date where available. Password hashes and bearer tokens are never
+rendered.
+
+System detail foundations are available at:
+
+- `GET /dashboard/system/licensing`
+- `GET /dashboard/system/backups`
+- `GET /dashboard/system/deployment`
+- `GET /dashboard/system/hardware`
+- `GET /dashboard/system/configuration`
+
+Configuration values are sanitized before rendering. Sensitive fields such as
+passwords, tokens, private keys, license files, activation paths, and key files
+are masked.
+
+## Administration JSON Endpoints
+
+The dashboard exposes lightweight JSON endpoints for Administration workspace
+data:
+
+- `GET /dashboard/api/system/summary`
+- `GET /dashboard/api/system/users`
+- `GET /dashboard/api/system/users/{user_id}`
+- `GET /dashboard/api/system/licensing`
+- `GET /dashboard/api/system/backups`
+- `GET /dashboard/api/system/deployment`
+- `GET /dashboard/api/system/hardware`
+- `GET /dashboard/api/system/configuration`
+- `GET /dashboard/api/system/activity`
+
+These endpoints use dashboard-specific read helpers and return schema-safe
+empty structures when optional platform tables, backup manifests, deployment
+state, hardware managers, or license files are unavailable.
+
 ## Authorization Foundation
 
 The current dashboard has a placeholder identity boundary in the dashboard
@@ -296,6 +355,7 @@ activation documents, bearer tokens, or payment credentials.
 - CRM workspace actions are read-only.
 - Procurement workspace actions are read-only.
 - Reports workspace actions are read-only.
+- Administration workspace actions are read-only.
 - Full dashboard browser authentication is not enabled yet.
 - Store, cashier, and customer filters currently accept IDs instead of lookup
   selectors.
@@ -309,5 +369,8 @@ activation documents, bearer tokens, or payment credentials.
 - Purchase order, goods received note, supplier statement, export, and print
   actions in Procurement are placeholders.
 - CSV, Excel, PDF, and print actions in Reports are placeholders.
+- User management writes, backup creation/restore, license activation,
+  deployment repair/update, hardware tests, and configuration edits in
+  Administration are placeholders.
 - Receipt preview availability depends on the existing document service and the
   persisted sale schema.

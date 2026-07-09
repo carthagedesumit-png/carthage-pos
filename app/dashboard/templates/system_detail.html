@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="hero">
+    <div>
+        <h1>{{ page_title }}</h1>
+        <p>{{ page_subtitle }}</p>
+        <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <a class="hero-link" href="/dashboard/system">Back to Administration</a>
+    </div>
+</section>
+
+{% if section == "licensing" %}
+<section class="cards">
+    <div class="card accent-blue"><span>State</span><strong>{{ detail.status.state }}</strong></div>
+    <div class="card accent-green"><span>Edition</span><strong>{{ detail.status.edition }}</strong></div>
+    <div class="card accent-amber"><span>Valid</span><strong>{{ detail.status.valid }}</strong></div>
+    <div class="card accent-red"><span>Read Only</span><strong>{{ detail.status.read_only }}</strong></div>
+</section>
+<section class="dashboard-grid detail-grid">
+    <div class="panel"><h2>License Configuration</h2><div class="detail-list">{% for key, value in detail.configuration.items() %}<span>{{ key.replace("_", " ").title() }} <strong>{{ value }}</strong></span>{% endfor %}</div></div>
+    <div class="panel"><h2>License Notifications</h2>{% if detail.status.notifications %}<div class="detail-list">{% for note in detail.status.notifications %}<span>Notice <strong>{{ note }}</strong></span>{% endfor %}</div>{% else %}<p class="empty-state">No license notifications are available.</p>{% endif %}</div>
+</section>
+{% elif section == "backups" %}
+<section class="cards">
+    <div class="card accent-blue"><span>Backups</span><strong>{{ detail.status.backup_count }}</strong></div>
+    <div class="card accent-green"><span>Total Size</span><strong>{{ detail.status.total_size }}</strong></div>
+    <div class="card accent-amber"><span>Compression</span><strong>{{ detail.status.compression_enabled }}</strong></div>
+    <div class="card accent-red"><span>Retention Days</span><strong>{{ detail.status.retention_days }}</strong></div>
+</section>
+<section class="panel reports-table-panel"><h2>Backup Inventory</h2>{% if detail["items"] %}<div class="table-scroll"><table class="table report-table"><thead><tr><th>ID</th><th>Name</th><th>Timestamp</th><th>Size</th><th>Type</th></tr></thead><tbody>{% for item in detail["items"] %}<tr><td>{{ item.backup_id }}</td><td>{{ item.name or "Unnamed" }}</td><td>{{ item.timestamp }}</td><td>{{ item.backup_size }}</td><td>{{ item.backup_type }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="empty-state">No backups are available.</p>{% endif %}</section>
+{% elif section == "deployment" %}
+<section class="cards">
+    <div class="card accent-blue"><span>Installed</span><strong>{{ detail.status.installed }}</strong></div>
+    <div class="card accent-green"><span>Healthy</span><strong>{{ detail.status.healthy }}</strong></div>
+    <div class="card accent-amber"><span>Update Status</span><strong>{{ detail.updates.status or "Ready" }}</strong></div>
+    <div class="card accent-red"><span>Installer</span><strong>{{ detail.installer.name or "Installer" }}</strong></div>
+</section>
+<section class="panel reports-table-panel"><h2>Deployment Checks</h2>{% if detail.status.checks %}<div class="table-scroll"><table class="table report-table"><thead><tr><th>Check</th><th>Passed</th><th>Message</th></tr></thead><tbody>{% for check in detail.status.checks %}<tr><td>{{ check.name }}</td><td>{{ check.passed }}</td><td>{{ check.message }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="empty-state">No deployment checks are available.</p>{% endif %}</section>
+{% elif section == "hardware" %}
+<section class="cards">
+    <div class="card accent-blue"><span>Printer</span><strong>{{ detail.status.printer.available }}</strong></div>
+    <div class="card accent-green"><span>Cash Drawer</span><strong>{{ detail.status.cash_drawer.available }}</strong></div>
+    <div class="card accent-amber"><span>Scanner</span><strong>{{ detail.status.scanner.available }}</strong></div>
+    <div class="card accent-red"><span>Display</span><strong>{{ detail.status.customer_display.available }}</strong></div>
+</section>
+<section class="panel reports-table-panel"><h2>Hardware Details</h2><div class="detail-list">{% for key, value in detail.status.items() %}<span>{{ key.replace("_", " ").title() }} <strong>{{ value }}</strong></span>{% endfor %}</div></section>
+{% else %}
+<section class="cards">
+    <div class="card accent-blue"><span>Sections</span><strong>{{ detail.sections|length }}</strong></div>
+    <div class="card accent-green"><span>Rows</span><strong>{{ detail.rows|length }}</strong></div>
+    <div class="card accent-amber"><span>Masked</span><strong>{{ detail.masked }}</strong></div>
+    <div class="card accent-red"><span>Mode</span><strong>Read Only</strong></div>
+</section>
+<section class="panel reports-table-panel"><h2>Configuration</h2><div class="table-scroll"><table class="table report-table"><thead><tr><th>Section</th><th>Key</th><th>Value</th></tr></thead><tbody>{% for row in detail.rows %}<tr><td>{{ row.section }}</td><td>{{ row.key }}</td><td>{{ row.value }}</td></tr>{% endfor %}</tbody></table></div></section>
+{% endif %}
+
+<section class="panel reports-table-panel">
+    <h2>Action Foundation</h2>
+    <div class="quick-actions label-actions">
+        {% for action in detail.actions %}
+        <a class="disabled-action" href="#">{{ action.label }} Coming Soon</a>
+        {% endfor %}
+    </div>
+</section>
+
+{% endblock %}

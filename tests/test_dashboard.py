@@ -837,5 +837,136 @@ class DashboardReportsEmptyDatabaseTestCase(unittest.TestCase):
         self.assertEqual(data["refunds"]["summary"]["refund_count"], 0)
 
 
+class DashboardAdministrationWorkspaceTestCase(unittest.TestCase):
+    def setUp(self):
+        self.db_file = tempfile.NamedTemporaryFile(delete=False)
+        self.db_file.close()
+        os.environ["CARTHAGE_POS_DB"] = self.db_file.name
+        os.environ["POS_LICENSE_FILE"] = "C:\\very-secret-license-path\\license-private.json"
+        os.environ["POS_ACTIVATION_DIRECTORY"] = "C:\\activation-secret-directory"
+
+        from app.core.config import reset_config_cache
+        from app.database.db_manager import initialize_database
+        from tests.support import bootstrap_staff
+
+        reset_config_cache()
+        initialize_database()
+        self.sessions = bootstrap_staff()
+        self.admin_session = self.sessions["admin"]
+        self.client = TestClient(app)
+
+    def tearDown(self):
+        os.environ.pop("CARTHAGE_POS_DB", None)
+        os.environ.pop("POS_LICENSE_FILE", None)
+        os.environ.pop("POS_ACTIVATION_DIRECTORY", None)
+        from app.core.config import reset_config_cache
+
+        reset_config_cache()
+        os.unlink(self.db_file.name)
+
+    def test_system_workspace_renders(self):
+        response = self.client.get("/dashboard/system")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Administration Workspace", response.text)
+        self.assertIn("Application Version", response.text)
+        self.assertIn("Configuration Summary", response.text)
+
+    def test_system_users_renders_and_preserves_filters(self):
+        response = self.client.get("/dashboard/system/users?search=admin&role=admin&active=all&page_size=10")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("User Management", response.text)
+        self.assertIn("admin", response.text)
+        self.assertIn('value="admin"', response.text)
+        self.assertIn('value="admin" selected', response.text)
+        self.assertIn('value="all" selected', response.text)
+
+    def test_system_user_detail_handles_existing_and_missing_user(self):
+        response = self.client.get(f"/dashboard/system/users/{self.admin_session.user_id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(self.admin_session.username, response.text)
+        self.assertIn("User Profile", response.text)
+
+        api_response = self.client.get(f"/dashboard/api/system/users/{self.admin_session.user_id}")
+        self.assertEqual(api_response.status_code, 200)
+        self.assertEqual(api_response.json()["user"]["id"], self.admin_session.user_id)
+        self.assertNotIn("password_hash", str(api_response.json()))
+
+        missing_page = self.client.get("/dashboard/system/users/999999")
+        self.assertEqual(missing_page.status_code, 404)
+        self.assertIn("User Not Found", missing_page.text)
+
+        missing_api = self.client.get("/dashboard/api/system/users/999999")
+        self.assertEqual(missing_api.status_code, 200)
+        self.assertIsNone(missing_api.json()["user"])
+
+    def test_system_detail_pages_render(self):
+        for path, marker in [
+            ("/dashboard/system/licensing", "License Configuration"),
+            ("/dashboard/system/backups", "Backup Inventory"),
+            ("/dashboard/system/deployment", "Deployment Checks"),
+            ("/dashboard/system/hardware", "Hardware Details"),
+            ("/dashboard/system/configuration", "Configuration"),
+        ]:
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(marker, response.text)
+                self.assertIn("Action Foundation", response.text)
+
+    def test_system_api_endpoints_return_json(self):
+        endpoints = [
+            "/dashboard/api/system/summary",
+            "/dashboard/api/system/users",
+            "/dashboard/api/system/licensing",
+            "/dashboard/api/system/backups",
+            "/dashboard/api/system/deployment",
+            "/dashboard/api/system/hardware",
+            "/dashboard/api/system/configuration",
+            "/dashboard/api/system/activity",
+        ]
+        for endpoint in endpoints:
+            with self.subTest(endpoint=endpoint):
+                response = self.client.get(endpoint)
+                self.assertEqual(response.status_code, 200)
+                self.assertIsInstance(response.json(), dict)
+
+        summary = self.client.get("/dashboard/api/system/summary").json()
+        self.assertIn("application_version", summary)
+        self.assertGreaterEqual(summary["user_count"], 1)
+
+    def test_sensitive_configuration_values_are_masked(self):
+        response = self.client.get("/dashboard/api/system/configuration")
+        self.assertEqual(response.status_code, 200)
+        text = str(response.json())
+        self.assertIn("masked", text)
+        self.assertNotIn("very-secret-license-path", text)
+        self.assertNotIn("activation-secret-directory", text)
+
+
+class DashboardAdministrationEmptyDatabaseTestCase(unittest.TestCase):
+    def setUp(self):
+        self.db_file = tempfile.NamedTemporaryFile(delete=False)
+        self.db_file.close()
+        os.environ["CARTHAGE_POS_DB"] = self.db_file.name
+
+        from app.database.db_manager import initialize_database
+
+        initialize_database()
+        self.client = TestClient(app)
+
+    def tearDown(self):
+        os.environ.pop("CARTHAGE_POS_DB", None)
+        os.unlink(self.db_file.name)
+
+    def test_system_workspace_empty_database_behavior(self):
+        response = self.client.get("/dashboard/system")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Administration Workspace", response.text)
+
+        api_response = self.client.get("/dashboard/api/system/users")
+        self.assertEqual(api_response.status_code, 200)
+        self.assertGreaterEqual(api_response.json()["pagination"]["total"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

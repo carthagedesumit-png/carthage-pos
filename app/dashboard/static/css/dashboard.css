@@ -548,6 +548,10 @@ body {
     min-width: 860px;
 }
 
+.admin-table {
+    min-width: 1180px;
+}
+
 .crm-table td small {
     display: block;
     margin-top: 4px;

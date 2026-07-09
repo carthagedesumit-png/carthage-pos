@@ -46,7 +46,9 @@ Dependencies flow inward:
   and receiving mutations owned by `app/procurement`. Reports dashboard helpers
   wrap `app/reports/reporting_service` where possible and add schema-safe
   dashboard aggregation only for browser composition and placeholder export
-  foundations.
+  foundations. Administration dashboard helpers provide read-only, masked
+  composition over auth, licensing, backup, deployment, hardware, and
+  configuration services while full browser auth enforcement is pending.
 - `app/barcodes`: normalized identifiers, label rendering/printing, scanner
   lookup, and barcode operational reports.
 - `app/backup`: SQLite snapshots, manifests, verification, atomic restore,

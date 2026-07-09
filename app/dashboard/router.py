@@ -37,6 +37,17 @@ from app.dashboard.services.report_service import (
     get_dashboard_report_stores,
     get_dashboard_reports_summary,
 )
+from app.dashboard.services.admin_service import (
+    get_dashboard_system_activity,
+    get_dashboard_system_backups,
+    get_dashboard_system_configuration,
+    get_dashboard_system_deployment,
+    get_dashboard_system_hardware,
+    get_dashboard_system_licensing,
+    get_dashboard_system_summary,
+    get_dashboard_system_user_detail,
+    list_dashboard_system_users,
+)
 
 templates = Jinja2Templates(directory="app/dashboard/templates")
 
@@ -522,24 +533,115 @@ def dashboard_reports_stores(request: Request, store_id: int | None = Query(defa
 
 @router.get("/system", response_class=HTMLResponse)
 def dashboard_system(request: Request):
-    summary = get_dashboard_summary()
-    return render_workspace(
-        request,
-        active_page="system",
-        page_title="System Workspace",
-        page_subtitle="Monitor licensing, backups, deployment, API health, and hardware.",
-        cards=[
-            {"label": "API", "value": summary["api_status"]},
-            {"label": "License", "value": summary["license_status"]},
-            {"label": "Backup", "value": summary["backup_status"]},
-        ],
-        main_panel_title="System Administration",
-        main_panel_text="Licensing, backup, deployment, updates, hardware and configuration controls will live here.",
-        steps=[
-            {"title": "Licensing", "text": "Add license status and activation management."},
-            {"title": "Backups", "text": "Add backup verification and restore actions."},
-            {"title": "Hardware", "text": "Add printer, scanner and drawer status."},
-        ],
+    summary = get_dashboard_system_summary()
+    return templates.TemplateResponse(
+        "system.html",
+        {
+            "request": request,
+            "title": "Administration Workspace - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "system",
+            "page_title": "Administration Workspace",
+            "page_subtitle": "CBOS system control for users, licensing, backups, deployment, hardware, and configuration.",
+            "summary": summary,
+        },
+    )
+
+
+@router.get("/system/users", response_class=HTMLResponse)
+def dashboard_system_users(
+    request: Request,
+    search: str = "",
+    role: str = "",
+    active: str = "all",
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+):
+    result = list_dashboard_system_users(
+        {"search": search, "role": role, "active": active, "page": page, "page_size": page_size}
+    )
+    return templates.TemplateResponse(
+        "system_users.html",
+        {
+            "request": request,
+            "title": "Users - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "system",
+            "users": result["items"],
+            "filters": result["filters"],
+            "pagination": result["pagination"],
+            "roles": ["", "admin", "manager", "cashier"],
+            "active_filters": ["active", "inactive", "all"],
+        },
+    )
+
+
+@router.get("/system/users/{user_id}", response_class=HTMLResponse)
+def dashboard_system_user_detail(request: Request, user_id: int):
+    detail = get_dashboard_system_user_detail(user_id)
+    if not detail:
+        return templates.TemplateResponse(
+            "system_user_detail.html",
+            {
+                "request": request,
+                "title": "User Not Found - Carthage Business Operating System",
+                "header": get_header(),
+                "active_page": "system",
+                "detail": None,
+                "user_id": user_id,
+            },
+            status_code=404,
+        )
+    return templates.TemplateResponse(
+        "system_user_detail.html",
+        {
+            "request": request,
+            "title": f"{detail['user']['username']} - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "system",
+            "detail": detail,
+            "user_id": user_id,
+        },
+    )
+
+
+@router.get("/system/licensing", response_class=HTMLResponse)
+def dashboard_system_licensing(request: Request):
+    return templates.TemplateResponse(
+        "system_detail.html",
+        {"request": request, "title": "Licensing - Carthage Business Operating System", "header": get_header(), "active_page": "system", "section": "licensing", "page_title": "Licensing", "page_subtitle": "License state, edition policy, and activation foundations.", "detail": get_dashboard_system_licensing()},
+    )
+
+
+@router.get("/system/backups", response_class=HTMLResponse)
+def dashboard_system_backups(request: Request):
+    return templates.TemplateResponse(
+        "system_detail.html",
+        {"request": request, "title": "Backups - Carthage Business Operating System", "header": get_header(), "active_page": "system", "section": "backups", "page_title": "Backups", "page_subtitle": "Backup inventory, latest backup metadata, and restore foundations.", "detail": get_dashboard_system_backups()},
+    )
+
+
+@router.get("/system/deployment", response_class=HTMLResponse)
+def dashboard_system_deployment(request: Request):
+    return templates.TemplateResponse(
+        "system_detail.html",
+        {"request": request, "title": "Deployment - Carthage Business Operating System", "header": get_header(), "active_page": "system", "section": "deployment", "page_title": "Deployment", "page_subtitle": "Installation health, version compatibility, and update readiness.", "detail": get_dashboard_system_deployment()},
+    )
+
+
+@router.get("/system/hardware", response_class=HTMLResponse)
+def dashboard_system_hardware(request: Request):
+    return templates.TemplateResponse(
+        "system_detail.html",
+        {"request": request, "title": "Hardware - Carthage Business Operating System", "header": get_header(), "active_page": "system", "section": "hardware", "page_title": "Hardware", "page_subtitle": "Peripheral availability for printers, cash drawer, scanner, and display.", "detail": get_dashboard_system_hardware()},
+    )
+
+
+@router.get("/system/configuration", response_class=HTMLResponse)
+def dashboard_system_configuration(request: Request):
+    return templates.TemplateResponse(
+        "system_detail.html",
+        {"request": request, "title": "Configuration - Carthage Business Operating System", "header": get_header(), "active_page": "system", "section": "configuration", "page_title": "Configuration", "page_subtitle": "Read-only sanitized process configuration.", "detail": get_dashboard_system_configuration()},
     )
 
 
@@ -971,6 +1073,62 @@ def dashboard_reports_export_api(export_format: str, date_from: str = "", date_t
         report_filter_payload(date_from, date_to, store_id, None, None, None, None, None, report_type),
         export_format=export_format,
     )
+
+
+@router.get("/api/system/summary")
+def dashboard_system_summary_api():
+    return get_dashboard_system_summary()
+
+
+@router.get("/api/system/users")
+def dashboard_system_users_api(
+    search: str = "",
+    role: str = "",
+    active: str = "all",
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+):
+    return list_dashboard_system_users(
+        {"search": search, "role": role, "active": active, "page": page, "page_size": page_size}
+    )
+
+
+@router.get("/api/system/users/{user_id}")
+def dashboard_system_user_detail_api(user_id: int):
+    detail = get_dashboard_system_user_detail(user_id)
+    if not detail:
+        return {"user": None, "activity": [], "actions": []}
+    return detail
+
+
+@router.get("/api/system/licensing")
+def dashboard_system_licensing_api():
+    return get_dashboard_system_licensing()
+
+
+@router.get("/api/system/backups")
+def dashboard_system_backups_api():
+    return get_dashboard_system_backups()
+
+
+@router.get("/api/system/deployment")
+def dashboard_system_deployment_api():
+    return get_dashboard_system_deployment()
+
+
+@router.get("/api/system/hardware")
+def dashboard_system_hardware_api():
+    return get_dashboard_system_hardware()
+
+
+@router.get("/api/system/configuration")
+def dashboard_system_configuration_api():
+    return get_dashboard_system_configuration()
+
+
+@router.get("/api/system/activity")
+def dashboard_system_activity_api(limit: int = Query(default=25, ge=1, le=100)):
+    return {"items": get_dashboard_system_activity(limit=limit)}
 
 
 @router.get("/health")

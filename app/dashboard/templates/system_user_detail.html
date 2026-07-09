@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{% if not detail %}
+<section class="hero">
+    <div>
+        <h1>User Not Found</h1>
+        <p>No user record is available for ID {{ user_id }}.</p>
+        <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <a class="hero-link" href="/dashboard/system/users">Back to Users</a>
+    </div>
+</section>
+{% else %}
+<section class="hero">
+    <div>
+        <h1>{{ detail.user.username }}</h1>
+        <p>{{ detail.user.full_name }} &middot; {{ detail.user.role }} &middot; {{ detail.user.active_status.title() }}</p>
+        <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <a class="hero-link" href="/dashboard/system/users">Back to Users</a>
+    </div>
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>User Profile</h2>
+        <div class="detail-list">
+            <span>Username <strong>{{ detail.user.username }}</strong></span>
+            <span>Full Name <strong>{{ detail.user.full_name }}</strong></span>
+            <span>Role <strong>{{ detail.user.role }}</strong></span>
+            <span>Status <strong>{{ detail.user.active_status.title() }}</strong></span>
+            <span>Created <strong>{{ detail.user.created_at or "Unknown" }}</strong></span>
+            <span>Last Login <strong>{{ detail.user.last_login or "Never" }}</strong></span>
+        </div>
+    </div>
+    <div class="panel">
+        <h2>Store Access</h2>
+        <div class="detail-list">
+            <span>Home Store <strong>{{ detail.user.home_store or "No store" }}</strong></span>
+            <span>Assigned Stores <strong>{{ detail.user.assigned_stores or "None" }}</strong></span>
+        </div>
+    </div>
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>User Activity</h2>
+        {% if detail.activity %}
+        <div class="detail-list">
+            {% for item in detail.activity %}
+            <span>{{ item.type }} <strong>{{ item.subject }} &middot; {{ item.created_at }}</strong></span>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No user activity is available.</p>
+        {% endif %}
+    </div>
+    <div class="panel">
+        <h2>User Actions</h2>
+        <div class="quick-actions label-actions">
+            {% for action in detail.actions %}
+            <a class="disabled-action" href="#">{{ action.label }} Coming Soon</a>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+{% endif %}
+
+{% endblock %}
