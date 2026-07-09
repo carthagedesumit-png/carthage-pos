@@ -162,5 +162,153 @@ class DashboardSalesEmptyDatabaseTestCase(unittest.TestCase):
         self.assertEqual(api_response.json()["pagination"]["total"], 0)
 
 
+class DashboardInventoryWorkspaceTestCase(unittest.TestCase):
+    def setUp(self):
+        self.db_file = tempfile.NamedTemporaryFile(delete=False)
+        self.db_file.close()
+        os.environ["CARTHAGE_POS_DB"] = self.db_file.name
+
+        from app.database.db_manager import initialize_database
+        from app.inventory.inventory_service import create_product, update_product
+        from tests.support import bootstrap_staff
+
+        initialize_database()
+        sessions = bootstrap_staff()
+        self.admin_session = sessions["admin"]
+        self.manager_session = sessions["manager"]
+        self.client = TestClient(app)
+        self.in_stock = create_product(
+            self.manager_session,
+            sku="DASH-INV-1",
+            barcode="DASH-INV-1",
+            name="Dashboard Inventory Product",
+            selling_price=25.0,
+            cost_price=12.0,
+            quantity_in_stock=10,
+            reorder_level=3,
+        )
+        self.low_stock = create_product(
+            self.manager_session,
+            sku="DASH-LOW-1",
+            barcode="DASH-LOW-1",
+            name="Dashboard Low Stock Product",
+            selling_price=15.0,
+            cost_price=5.0,
+            quantity_in_stock=2,
+            reorder_level=5,
+        )
+        self.missing_barcode = create_product(
+            self.manager_session,
+            sku="DASH-NOBC-1",
+            barcode=None,
+            name="Dashboard Missing Barcode Product",
+            selling_price=9.0,
+            cost_price=3.0,
+            quantity_in_stock=0,
+            reorder_level=2,
+        )
+        self.inactive = update_product(
+            self.manager_session,
+            self.missing_barcode["id"],
+            is_active=0,
+        )
+
+    def tearDown(self):
+        os.environ.pop("CARTHAGE_POS_DB", None)
+        os.unlink(self.db_file.name)
+
+    def test_inventory_workspace_renders_and_preserves_filters(self):
+        response = self.client.get(
+            "/dashboard/inventory?search=LOW&low_stock=true&active=all&has_barcode=has&page_size=10"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Inventory Workspace", response.text)
+        self.assertIn("Dashboard Low Stock Product", response.text)
+        self.assertIn('value="LOW"', response.text)
+        self.assertIn('value="all" selected', response.text)
+        self.assertIn('value="has" selected', response.text)
+        self.assertIn("checked", response.text)
+
+    def test_inventory_workspace_pagination(self):
+        response = self.client.get("/dashboard/inventory?active=all&page_size=1")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Page 1 of 3", response.text)
+        self.assertIn("Next", response.text)
+
+    def test_inventory_api_returns_json(self):
+        response = self.client.get("/dashboard/api/inventory?search=DASH-INV&page_size=1")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("items", data)
+        self.assertIn("summary", data)
+        self.assertIn("pagination", data)
+        self.assertEqual(data["items"][0]["sku"], "DASH-INV-1")
+
+    def test_inventory_low_stock_and_valuation_endpoints_return_json(self):
+        low_response = self.client.get("/dashboard/api/inventory/low-stock")
+        self.assertEqual(low_response.status_code, 200)
+        self.assertIsInstance(low_response.json(), list)
+        self.assertIn("DASH-LOW-1", {item["sku"] for item in low_response.json()})
+
+        valuation_response = self.client.get("/dashboard/api/inventory/valuation")
+        self.assertEqual(valuation_response.status_code, 200)
+        valuation = valuation_response.json()
+        self.assertIn("summary", valuation)
+        self.assertIn("by_store", valuation)
+        self.assertGreaterEqual(valuation["summary"]["inventory_value"], 130.0)
+
+    def test_inventory_summary_endpoint_returns_json(self):
+        response = self.client.get("/dashboard/api/inventory/summary?active=all")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["product_rows"], 3)
+        self.assertEqual(data["missing_barcode"], 1)
+
+    def test_product_detail_handles_existing_product(self):
+        response = self.client.get(f"/dashboard/inventory/products/{self.in_stock['id']}")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Dashboard Inventory Product", response.text)
+        self.assertIn("Barcode Identifiers", response.text)
+        self.assertIn("Stock Movement History", response.text)
+
+        api_response = self.client.get(f"/dashboard/api/inventory/products/{self.in_stock['id']}")
+        self.assertEqual(api_response.status_code, 200)
+        self.assertEqual(api_response.json()["product"]["sku"], "DASH-INV-1")
+
+    def test_product_detail_handles_missing_product_safely(self):
+        page_response = self.client.get("/dashboard/inventory/products/999999")
+        self.assertEqual(page_response.status_code, 404)
+        self.assertIn("Product Not Found", page_response.text)
+
+        api_response = self.client.get("/dashboard/api/inventory/products/999999")
+        self.assertEqual(api_response.status_code, 200)
+        self.assertIsNone(api_response.json()["product"])
+
+
+class DashboardInventoryEmptyDatabaseTestCase(unittest.TestCase):
+    def setUp(self):
+        self.db_file = tempfile.NamedTemporaryFile(delete=False)
+        self.db_file.close()
+        os.environ["CARTHAGE_POS_DB"] = self.db_file.name
+
+        from app.database.db_manager import initialize_database
+
+        initialize_database()
+        self.client = TestClient(app)
+
+    def tearDown(self):
+        os.environ.pop("CARTHAGE_POS_DB", None)
+        os.unlink(self.db_file.name)
+
+    def test_inventory_workspace_empty_database_behavior(self):
+        response = self.client.get("/dashboard/inventory")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("No products match the selected filters.", response.text)
+
+        api_response = self.client.get("/dashboard/api/inventory")
+        self.assertEqual(api_response.status_code, 200)
+        self.assertEqual(api_response.json()["pagination"]["total"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

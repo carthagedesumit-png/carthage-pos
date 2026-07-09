@@ -1,9 +1,10 @@
 # Dashboard
 
 The browser dashboard lives under `/dashboard` and is a management surface for
-owners, managers, and administrators. It reuses domain services for sales,
-documents, reports, inventory, and platform health rather than duplicating
-business rules in route handlers.
+owners, managers, and administrators inside the Carthage Business Operating
+System. The POS remains a core operating module. Dashboard pages reuse domain
+services for sales, documents, reports, inventory, and platform health rather
+than duplicating business rules in route handlers.
 
 ## Sales Workspace
 
@@ -54,6 +55,54 @@ existing dashboard API endpoints such as `/dashboard/api/summary`,
 `/dashboard/api/sales-trend`, `/dashboard/api/top-products`, and
 `/dashboard/api/insights`.
 
+## Inventory Workspace
+
+`GET /dashboard/inventory` renders the Inventory Workspace V1 management page.
+It is a read-only portal for product, store stock, valuation, barcode readiness,
+and label workflow review.
+
+The page includes:
+
+- Summary cards for inventory value, product rows, low stock, and out of stock.
+- A responsive product table with product name, SKU, barcode, category,
+  supplier, store, quantity on hand, reorder level, average cost, selling price,
+  inventory value, active status, and stock badges.
+- Missing-barcode indicators and a detail action for each product.
+- Filter controls that preserve selected query parameters.
+- Empty-state handling and previous/next pagination.
+
+Supported query parameters:
+
+- `search`
+- `store_id`
+- `category_id`
+- `supplier_id`
+- `low_stock`
+- `out_of_stock`
+- `active` with `active`, `inactive`, or `all`
+- `has_barcode` with `all`, `has`, or `missing`
+- `page`
+- `page_size`
+
+`GET /dashboard/inventory/products/{product_id}` renders a read-only product
+detail page with profile, pricing, barcode identifiers, stock by store, stock
+movement history, procurement history where available, and label/print action
+placeholders.
+
+## Inventory JSON Endpoints
+
+The dashboard exposes lightweight JSON endpoints for the inventory workspace:
+
+- `GET /dashboard/api/inventory`
+- `GET /dashboard/api/inventory/summary`
+- `GET /dashboard/api/inventory/low-stock`
+- `GET /dashboard/api/inventory/products/{product_id}`
+- `GET /dashboard/api/inventory/valuation`
+
+These endpoints use dashboard read helpers that are schema-safe and
+migration-safe. They return empty lists or zeroed summaries when product,
+barcode, store inventory, procurement, or movement tables are unavailable.
+
 ## Authorization Foundation
 
 The current dashboard has a placeholder identity boundary in the dashboard
@@ -70,8 +119,13 @@ activation documents, bearer tokens, or payment credentials.
 ## Current Limitations
 
 - Sales workspace actions are read-only.
+- Inventory workspace actions are read-only.
 - Full dashboard browser authentication is not enabled yet.
 - Store, cashier, and customer filters currently accept IDs instead of lookup
   selectors.
+- Store, category, and supplier inventory filters currently accept IDs instead
+  of lookup selectors.
+- Label print actions are placeholders; full label workflow remains in barcode
+  and hardware services.
 - Receipt preview availability depends on the existing document service and the
   persisted sale schema.

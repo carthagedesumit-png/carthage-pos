@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="hero">
+    <div>
+        <h1>{{ page_title }}</h1>
+        <p>{{ page_subtitle }}</p>
+        <small>Carthage Business Operating System &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+
+    <div class="hero-status">
+        <span class="status success">Inventory Control</span>
+        <span class="status success">Read Only</span>
+    </div>
+</section>
+
+<section class="cards">
+    <div class="card accent-blue">
+        <span>Inventory Value</span>
+        <strong>{{ summary.inventory_value_display }}</strong>
+    </div>
+    <div class="card accent-green">
+        <span>Product Rows</span>
+        <strong>{{ summary.product_rows }}</strong>
+    </div>
+    <div class="card accent-amber">
+        <span>Low Stock</span>
+        <strong>{{ summary.low_stock }}</strong>
+    </div>
+    <div class="card accent-red">
+        <span>Out of Stock</span>
+        <strong>{{ summary.out_of_stock }}</strong>
+    </div>
+</section>
+
+<section class="panel inventory-workspace">
+    <form class="filter-form" method="get" action="/dashboard/inventory">
+        <label>
+            <span>Search</span>
+            <input type="search" name="search" value="{{ filters.search }}" placeholder="Product, SKU, barcode">
+        </label>
+        <label>
+            <span>Store ID</span>
+            <input type="number" min="1" name="store_id" value="{{ filters.store_id or '' }}">
+        </label>
+        <label>
+            <span>Category ID</span>
+            <input type="number" min="1" name="category_id" value="{{ filters.category_id or '' }}">
+        </label>
+        <label>
+            <span>Supplier ID</span>
+            <input type="number" min="1" name="supplier_id" value="{{ filters.supplier_id or '' }}">
+        </label>
+        <label>
+            <span>Status</span>
+            <select name="active">
+                {% for option in active_filters %}
+                <option value="{{ option }}" {% if filters.active == option %}selected{% endif %}>
+                    {{ option.title() }}
+                </option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            <span>Barcode</span>
+            <select name="has_barcode">
+                {% for option in barcode_filters %}
+                <option value="{{ option }}" {% if filters.barcode == option %}selected{% endif %}>
+                    {{ "Has Barcode" if option == "has" else ("Missing Barcode" if option == "missing" else "Any") }}
+                </option>
+                {% endfor %}
+            </select>
+        </label>
+        <label class="check-filter">
+            <span>Low Stock</span>
+            <input type="checkbox" name="low_stock" value="true" {% if filters.low_stock %}checked{% endif %}>
+        </label>
+        <label class="check-filter">
+            <span>Out of Stock</span>
+            <input type="checkbox" name="out_of_stock" value="true" {% if filters.out_of_stock %}checked{% endif %}>
+        </label>
+        <label>
+            <span>Page Size</span>
+            <input type="number" min="1" max="100" name="page_size" value="{{ filters.page_size }}">
+        </label>
+        <div class="filter-actions">
+            <button type="submit">Apply Filters</button>
+            <a href="/dashboard/inventory">Reset</a>
+        </div>
+    </form>
+</section>
+
+<section class="panel inventory-table-panel">
+    <div class="panel-heading">
+        <div>
+            <h2>Products</h2>
+            <p class="muted">{{ pagination.total }} matching inventory rows</p>
+        </div>
+        <span class="status warning">{{ summary.missing_barcode }} missing barcodes</span>
+    </div>
+
+    {% if products %}
+    <div class="table-scroll">
+        <table class="table inventory-table">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>SKU</th>
+                    <th>Barcode</th>
+                    <th>Category</th>
+                    <th>Supplier</th>
+                    <th>Store</th>
+                    <th>Qty</th>
+                    <th>Reorder</th>
+                    <th>Avg Cost</th>
+                    <th>Price</th>
+                    <th>Value</th>
+                    <th>Status</th>
+                    <th>Stock</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for product in products %}
+                <tr>
+                    <td><strong>{{ product.name }}</strong></td>
+                    <td>{{ product.sku }}</td>
+                    <td>
+                        {% if product.has_barcode %}
+                        {{ product.barcode }}
+                        {% else %}
+                        <span class="badge badge-missing-barcode">Missing</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ product.category }}</td>
+                    <td>{{ product.supplier }}</td>
+                    <td>{{ product.store }}</td>
+                    <td>{{ product.quantity_on_hand }}</td>
+                    <td>{{ product.reorder_level }}</td>
+                    <td>{{ product.average_cost_display }}</td>
+                    <td>{{ product.selling_price_display }}</td>
+                    <td><strong>{{ product.inventory_value_display }}</strong></td>
+                    <td><span class="badge badge-{{ product.active_status }}">{{ product.active_status.title() }}</span></td>
+                    <td><span class="badge badge-{{ product.stock_status.replace(' ', '-') }}">{{ product.stock_status.title() }}</span></td>
+                    <td><a class="table-action" href="/dashboard/inventory/products/{{ product.product_id }}">View</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No products match the selected filters.</p>
+    {% endif %}
+
+    <div class="pagination">
+        <span>Page {{ pagination.page }} of {{ pagination.total_pages }}</span>
+        <div>
+            {% if pagination.has_previous %}
+            <a href="{{ request.url.include_query_params(page=pagination.previous_page, page_size=pagination.page_size) }}">Previous</a>
+            {% else %}
+            <span class="disabled">Previous</span>
+            {% endif %}
+            {% if pagination.has_next %}
+            <a href="{{ request.url.include_query_params(page=pagination.next_page, page_size=pagination.page_size) }}">Next</a>
+            {% else %}
+            <span class="disabled">Next</span>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+{% endblock %}

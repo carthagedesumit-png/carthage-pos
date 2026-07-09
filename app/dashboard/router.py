@@ -3,9 +3,14 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from app.dashboard.services.dashboard_service import (
+    get_dashboard_inventory_summary,
+    get_dashboard_inventory_valuation,
+    get_dashboard_low_stock_inventory,
+    get_dashboard_product_detail,
     get_dashboard_sale_detail,
     get_dashboard_sales_summary,
     get_dashboard_summary,
+    list_dashboard_inventory,
     list_dashboard_sales,
 )
 
@@ -140,25 +145,78 @@ def dashboard_sale_detail(request: Request, sale_id: int):
 
 
 @router.get("/inventory", response_class=HTMLResponse)
-def dashboard_inventory(request: Request):
-    summary = get_dashboard_summary()
-    return render_workspace(
-        request,
-        active_page="inventory",
-        page_title="Inventory Workspace",
-        page_subtitle="Manage products, stock levels, valuation, barcode labels, and transfers.",
-        cards=[
-            {"label": "Inventory Value", "value": summary["inventory_value"]},
-            {"label": "Low Stock", "value": summary["low_stock"]},
-            {"label": "Stores", "value": summary["stores"]},
-        ],
-        main_panel_title="Inventory Control",
-        main_panel_text="Product lists, store stock, low-stock alerts, valuation, barcode and label workflows will live here.",
-        steps=[
-            {"title": "Products", "text": "Add product browser and filters."},
-            {"title": "Barcode labels", "text": "Add label preview and print actions."},
-            {"title": "Transfers", "text": "Add inter-store transfer status table."},
-        ],
+def dashboard_inventory(
+    request: Request,
+    search: str = "",
+    store_id: int | None = Query(default=None),
+    category_id: int | None = Query(default=None),
+    supplier_id: int | None = Query(default=None),
+    low_stock: bool = False,
+    out_of_stock: bool = False,
+    active: str = "active",
+    has_barcode: str = "all",
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+):
+    result = list_dashboard_inventory(
+        {
+            "search": search,
+            "store_id": store_id,
+            "category_id": category_id,
+            "supplier_id": supplier_id,
+            "low_stock": low_stock,
+            "out_of_stock": out_of_stock,
+            "active": active,
+            "has_barcode": has_barcode,
+            "page": page,
+            "page_size": page_size,
+        }
+    )
+    return templates.TemplateResponse(
+        "inventory.html",
+        {
+            "request": request,
+            "title": "Inventory Workspace - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "inventory",
+            "page_title": "Inventory Workspace",
+            "page_subtitle": "Manage products, store stock, valuation, barcodes, and label readiness.",
+            "products": result["items"],
+            "summary": result["summary"],
+            "filters": result["filters"],
+            "pagination": result["pagination"],
+            "active_filters": ["active", "inactive", "all"],
+            "barcode_filters": ["all", "has", "missing"],
+        },
+    )
+
+
+@router.get("/inventory/products/{product_id}", response_class=HTMLResponse)
+def dashboard_product_detail(request: Request, product_id: int):
+    detail = get_dashboard_product_detail(product_id)
+    if not detail:
+        return templates.TemplateResponse(
+            "product_detail.html",
+            {
+                "request": request,
+                "title": "Product Not Found - Carthage Business Operating System",
+                "header": get_header(),
+                "active_page": "inventory",
+                "detail": None,
+                "product_id": product_id,
+            },
+            status_code=404,
+        )
+    return templates.TemplateResponse(
+        "product_detail.html",
+        {
+            "request": request,
+            "title": f"{detail['product']['name']} - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "inventory",
+            "detail": detail,
+            "product_id": product_id,
+        },
     )
 
 
@@ -316,6 +374,99 @@ def dashboard_sale_detail_api(sale_id: int):
     detail = get_dashboard_sale_detail(sale_id)
     if not detail:
         return {"sale": None, "items": [], "payments": [], "returns": [], "receipt_preview": ""}
+    return detail
+
+
+@router.get("/api/inventory")
+def dashboard_inventory_api(
+    search: str = "",
+    store_id: int | None = Query(default=None),
+    category_id: int | None = Query(default=None),
+    supplier_id: int | None = Query(default=None),
+    low_stock: bool = False,
+    out_of_stock: bool = False,
+    active: str = "active",
+    has_barcode: str = "all",
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+):
+    return list_dashboard_inventory(
+        {
+            "search": search,
+            "store_id": store_id,
+            "category_id": category_id,
+            "supplier_id": supplier_id,
+            "low_stock": low_stock,
+            "out_of_stock": out_of_stock,
+            "active": active,
+            "has_barcode": has_barcode,
+            "page": page,
+            "page_size": page_size,
+        }
+    )
+
+
+@router.get("/api/inventory/summary")
+def dashboard_inventory_summary_api(
+    search: str = "",
+    store_id: int | None = Query(default=None),
+    category_id: int | None = Query(default=None),
+    supplier_id: int | None = Query(default=None),
+    low_stock: bool = False,
+    out_of_stock: bool = False,
+    active: str = "active",
+    has_barcode: str = "all",
+):
+    return get_dashboard_inventory_summary(
+        {
+            "search": search,
+            "store_id": store_id,
+            "category_id": category_id,
+            "supplier_id": supplier_id,
+            "low_stock": low_stock,
+            "out_of_stock": out_of_stock,
+            "active": active,
+            "has_barcode": has_barcode,
+        }
+    )
+
+
+@router.get("/api/inventory/low-stock")
+def dashboard_inventory_low_stock_api(limit: int = Query(default=50, ge=1, le=250)):
+    return get_dashboard_low_stock_inventory(limit=limit)
+
+
+@router.get("/api/inventory/valuation")
+def dashboard_inventory_valuation_api(
+    search: str = "",
+    store_id: int | None = Query(default=None),
+    category_id: int | None = Query(default=None),
+    supplier_id: int | None = Query(default=None),
+    active: str = "active",
+):
+    return get_dashboard_inventory_valuation(
+        {
+            "search": search,
+            "store_id": store_id,
+            "category_id": category_id,
+            "supplier_id": supplier_id,
+            "active": active,
+        }
+    )
+
+
+@router.get("/api/inventory/products/{product_id}")
+def dashboard_inventory_product_api(product_id: int):
+    detail = get_dashboard_product_detail(product_id)
+    if not detail:
+        return {
+            "product": None,
+            "identifiers": [],
+            "stock_by_store": [],
+            "movements": [],
+            "procurement": [],
+            "label_actions": [],
+        }
     return detail
 
 

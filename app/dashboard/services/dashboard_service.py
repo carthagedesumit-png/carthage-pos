@@ -477,6 +477,452 @@ def get_dashboard_sale_detail(sale_id, session=None):
     }
 
 
+def _normalize_inventory_filters(filters=None):
+    filters = filters or {}
+    status = _safe_text(filters.get("status") or filters.get("active")).lower()
+    if status not in {"active", "inactive", "all"}:
+        status = "active"
+    barcode = _safe_text(filters.get("barcode") or filters.get("has_barcode")).lower()
+    if barcode in {"1", "true", "yes", "has", "has_barcode"}:
+        barcode = "has"
+    elif barcode in {"0", "false", "no", "missing", "missing_barcode"}:
+        barcode = "missing"
+    elif barcode not in {"all", ""}:
+        barcode = "all"
+    else:
+        barcode = "all"
+    return {
+        "search": _safe_text(filters.get("search") or filters.get("q")),
+        "store_id": _safe_int(filters.get("store_id")),
+        "category_id": _safe_int(filters.get("category_id")),
+        "supplier_id": _safe_int(filters.get("supplier_id")),
+        "low_stock": str(filters.get("low_stock") or "").lower() in {"1", "true", "yes", "on"},
+        "out_of_stock": str(filters.get("out_of_stock") or "").lower() in {"1", "true", "yes", "on"},
+        "active": status,
+        "barcode": barcode,
+        "page": _safe_int(filters.get("page"), default=1, minimum=1),
+        "page_size": _safe_int(filters.get("page_size"), default=25, minimum=1, maximum=100),
+    }
+
+
+def _barcode_exists_expr(has_identifiers):
+    identifier_exists = (
+        " OR EXISTS (SELECT 1 FROM product_identifiers pi "
+        "WHERE pi.product_id = p.id AND pi.is_active = 1)"
+        if has_identifiers else ""
+    )
+    return f"(p.barcode IS NOT NULL AND TRIM(p.barcode) != ''{identifier_exists})"
+
+
+def _inventory_query_parts(conn, filters, session=None):
+    product_columns = _columns(conn, "products")
+    inventory_columns = _columns(conn, "store_inventory")
+    store_columns = _columns(conn, "stores")
+    category_columns = _columns(conn, "categories")
+    supplier_columns = _columns(conn, "suppliers")
+    has_identifiers = _table_exists(conn, "product_identifiers")
+    has_inventory = bool(inventory_columns)
+
+    quantity_expr = "si.quantity_on_hand" if has_inventory else "p.quantity_in_stock"
+    reorder_expr = "si.reorder_level" if has_inventory else "p.reorder_level"
+    average_cost_expr = "si.average_cost" if has_inventory else "p.cost_price"
+    store_id_expr = "si.store_id" if has_inventory else "NULL"
+    store_name_expr = "COALESCE(st.name, st.code, 'Store #' || si.store_id)" if has_inventory and store_columns else "'Main Store'"
+    barcode_expr = (
+        "COALESCE((SELECT pi.value FROM product_identifiers pi "
+        "WHERE pi.product_id = p.id AND pi.is_active = 1 AND pi.is_primary = 1 "
+        "ORDER BY pi.id DESC LIMIT 1), p.barcode, '')"
+        if has_identifiers else "COALESCE(p.barcode, '')"
+    )
+
+    select_fields = [
+        "p.id AS product_id",
+        "p.name AS product_name",
+        "p.sku",
+        f"{barcode_expr} AS primary_barcode",
+        "p.barcode AS legacy_barcode",
+        "p.category_id" if "category_id" in product_columns else "NULL AS category_id",
+        "p.supplier_id" if "supplier_id" in product_columns else "NULL AS supplier_id",
+        f"{store_id_expr} AS store_id",
+        f"{store_name_expr} AS store_name",
+        f"COALESCE({quantity_expr}, 0) AS quantity_on_hand",
+        f"COALESCE({reorder_expr}, 0) AS reorder_level",
+        f"COALESCE({average_cost_expr}, 0) AS average_cost",
+        "COALESCE(p.selling_price, 0) AS selling_price",
+        "COALESCE(p.is_active, 1) AS is_active",
+        "COALESCE(cat.name, 'Uncategorized') AS category_name" if category_columns else "'Uncategorized' AS category_name",
+        "COALESCE(sup.name, 'Unassigned') AS supplier_name" if supplier_columns else "'Unassigned' AS supplier_name",
+    ]
+    joins = []
+    if has_inventory:
+        joins.append("LEFT JOIN store_inventory si ON si.product_id = p.id")
+        if store_columns:
+            joins.append("LEFT JOIN stores st ON st.id = si.store_id")
+    if category_columns and "category_id" in product_columns:
+        joins.append("LEFT JOIN categories cat ON cat.id = p.category_id")
+    if supplier_columns and "supplier_id" in product_columns:
+        joins.append("LEFT JOIN suppliers sup ON sup.id = p.supplier_id")
+
+    where = ["1 = 1"]
+    params = []
+    scope = _dashboard_access_scope(session)
+    if scope["store_ids"] and has_inventory:
+        allowed_ids = [store_id for store_id in scope["store_ids"] if store_id is not None]
+        if allowed_ids:
+            where.append(f"si.store_id IN ({','.join('?' for _ in allowed_ids)})")
+            params.extend(allowed_ids)
+    if filters["store_id"] is not None and has_inventory:
+        where.append("si.store_id = ?")
+        params.append(filters["store_id"])
+    if filters["category_id"] is not None and "category_id" in product_columns:
+        where.append("p.category_id = ?")
+        params.append(filters["category_id"])
+    if filters["supplier_id"] is not None and "supplier_id" in product_columns:
+        where.append("p.supplier_id = ?")
+        params.append(filters["supplier_id"])
+    if filters["active"] == "active":
+        where.append("COALESCE(p.is_active, 1) = 1")
+    elif filters["active"] == "inactive":
+        where.append("COALESCE(p.is_active, 1) = 0")
+    if filters["low_stock"]:
+        where.append(f"COALESCE({quantity_expr}, 0) <= COALESCE({reorder_expr}, 0)")
+    if filters["out_of_stock"]:
+        where.append(f"COALESCE({quantity_expr}, 0) = 0")
+    barcode_exists = _barcode_exists_expr(has_identifiers)
+    if filters["barcode"] == "has":
+        where.append(barcode_exists)
+    elif filters["barcode"] == "missing":
+        where.append(f"NOT {barcode_exists}")
+    if filters["search"]:
+        pattern = f"%{filters['search']}%"
+        terms = ["p.name LIKE ?", "p.sku LIKE ?", "p.barcode LIKE ?"]
+        params.extend([pattern, pattern, pattern])
+        if has_identifiers:
+            terms.append(
+                "EXISTS (SELECT 1 FROM product_identifiers pi "
+                "WHERE pi.product_id = p.id AND pi.is_active = 1 AND pi.value LIKE ?)"
+            )
+            params.append(pattern)
+        where.append(f"({' OR '.join(terms)})")
+
+    return {
+        "select": ", ".join(select_fields),
+        "from": "products p",
+        "joins": "\n".join(joins),
+        "where": " AND ".join(where),
+        "params": params,
+        "quantity_expr": quantity_expr,
+        "reorder_expr": reorder_expr,
+        "average_cost_expr": average_cost_expr,
+        "barcode_exists": barcode_exists,
+        "has_inventory": has_inventory,
+    }
+
+
+def _format_inventory_row(row):
+    quantity = int(row["quantity_on_hand"] or 0)
+    reorder = int(row["reorder_level"] or 0)
+    average_cost = float(row["average_cost"] or 0)
+    selling_price = float(row["selling_price"] or 0)
+    value = quantity * average_cost
+    barcode = row["primary_barcode"] or row["legacy_barcode"] or ""
+    if quantity <= 0:
+        stock_status = "out of stock"
+    elif quantity <= reorder:
+        stock_status = "low stock"
+    else:
+        stock_status = "in stock"
+    return {
+        "product_id": row["product_id"],
+        "name": row["product_name"] or "Unnamed product",
+        "sku": row["sku"] or f"PRODUCT-{row['product_id']}",
+        "barcode": barcode,
+        "has_barcode": bool(barcode),
+        "category": row["category_name"] or "Uncategorized",
+        "supplier": row["supplier_name"] or "Unassigned",
+        "store": row["store_name"] or "Main Store",
+        "store_id": row["store_id"],
+        "quantity_on_hand": quantity,
+        "reorder_level": reorder,
+        "average_cost": average_cost,
+        "average_cost_display": money(average_cost),
+        "selling_price": selling_price,
+        "selling_price_display": money(selling_price),
+        "inventory_value": value,
+        "inventory_value_display": money(value),
+        "is_active": bool(row["is_active"]),
+        "active_status": "active" if row["is_active"] else "inactive",
+        "stock_status": stock_status,
+    }
+
+
+def _empty_inventory_summary():
+    return {
+        "product_rows": 0,
+        "active_rows": 0,
+        "inventory_value": 0,
+        "inventory_value_display": money(0),
+        "low_stock": 0,
+        "out_of_stock": 0,
+        "missing_barcode": 0,
+    }
+
+
+def _dashboard_inventory_summary_from_parts(conn, parts):
+    row = conn.execute(
+        f"""SELECT COUNT(*) AS product_rows,
+                   COALESCE(SUM(CASE WHEN COALESCE(p.is_active, 1) = 1 THEN 1 ELSE 0 END), 0) AS active_rows,
+                   COALESCE(SUM(COALESCE({parts['quantity_expr']}, 0) * COALESCE({parts['average_cost_expr']}, 0)), 0) AS inventory_value,
+                   COALESCE(SUM(CASE WHEN COALESCE({parts['quantity_expr']}, 0) <= COALESCE({parts['reorder_expr']}, 0) THEN 1 ELSE 0 END), 0) AS low_stock,
+                   COALESCE(SUM(CASE WHEN COALESCE({parts['quantity_expr']}, 0) = 0 THEN 1 ELSE 0 END), 0) AS out_of_stock,
+                   COALESCE(SUM(CASE WHEN NOT {parts['barcode_exists']} THEN 1 ELSE 0 END), 0) AS missing_barcode
+            FROM {parts['from']}
+            {parts['joins']}
+            WHERE {parts['where']}""",
+        parts["params"],
+    ).fetchone()
+    value = float(row["inventory_value"] or 0)
+    return {
+        "product_rows": int(row["product_rows"] or 0),
+        "active_rows": int(row["active_rows"] or 0),
+        "inventory_value": value,
+        "inventory_value_display": money(value),
+        "low_stock": int(row["low_stock"] or 0),
+        "out_of_stock": int(row["out_of_stock"] or 0),
+        "missing_barcode": int(row["missing_barcode"] or 0),
+    }
+
+
+def get_dashboard_inventory_summary(filters=None, session=None):
+    filters = _normalize_inventory_filters(filters)
+    with get_connection() as conn:
+        if not _table_exists(conn, "products"):
+            return _empty_inventory_summary()
+        parts = _inventory_query_parts(conn, filters, session=session)
+        return _dashboard_inventory_summary_from_parts(conn, parts)
+
+
+def list_dashboard_inventory(filters=None, session=None):
+    filters = _normalize_inventory_filters(filters)
+    with get_connection() as conn:
+        if not _table_exists(conn, "products"):
+            total = 0
+            rows = []
+            summary = _empty_inventory_summary()
+        else:
+            parts = _inventory_query_parts(conn, filters, session=session)
+            total = conn.execute(
+                f"""SELECT COUNT(*)
+                    FROM {parts['from']}
+                    {parts['joins']}
+                    WHERE {parts['where']}""",
+                parts["params"],
+            ).fetchone()[0]
+            total_pages = max(1, ceil(total / filters["page_size"]))
+            filters["page"] = min(filters["page"], total_pages)
+            offset = (filters["page"] - 1) * filters["page_size"]
+            rows = conn.execute(
+                f"""SELECT {parts['select']}
+                    FROM {parts['from']}
+                    {parts['joins']}
+                    WHERE {parts['where']}
+                    ORDER BY p.name COLLATE NOCASE, p.id, store_name
+                    LIMIT ? OFFSET ?""",
+                [*parts["params"], filters["page_size"], offset],
+            ).fetchall()
+            summary = _dashboard_inventory_summary_from_parts(conn, parts)
+
+    total_pages = max(1, ceil(total / filters["page_size"]))
+    page = filters["page"]
+    return {
+        "items": [_format_inventory_row(row) for row in rows],
+        "summary": summary,
+        "filters": filters,
+        "pagination": {
+            "page": page,
+            "page_size": filters["page_size"],
+            "total": total,
+            "total_pages": total_pages,
+            "has_previous": page > 1,
+            "has_next": page < total_pages,
+            "previous_page": page - 1 if page > 1 else None,
+            "next_page": page + 1 if page < total_pages else None,
+        },
+    }
+
+
+def get_dashboard_low_stock_inventory(limit=50, session=None):
+    result = list_dashboard_inventory(
+        {"low_stock": True, "active": "active", "page": 1, "page_size": limit},
+        session=session,
+    )
+    return result["items"]
+
+
+def get_dashboard_inventory_valuation(filters=None, session=None):
+    filters = _normalize_inventory_filters(filters)
+    summary = get_dashboard_inventory_summary(filters, session=session)
+    by_store = []
+    with get_connection() as conn:
+        if _table_exists(conn, "products") and _table_exists(conn, "store_inventory"):
+            parts = _inventory_query_parts(conn, filters, session=session)
+            if _table_exists(conn, "stores"):
+                rows = conn.execute(
+                    f"""SELECT si.store_id,
+                               COALESCE(st.name, st.code, 'Store #' || si.store_id) AS store_name,
+                               COALESCE(SUM(si.quantity_on_hand * si.average_cost), 0) AS inventory_value,
+                               COALESCE(SUM(si.quantity_on_hand), 0) AS quantity_on_hand
+                        FROM products p
+                        LEFT JOIN store_inventory si ON si.product_id = p.id
+                        LEFT JOIN stores st ON st.id = si.store_id
+                        WHERE {parts['where']}
+                        GROUP BY si.store_id, store_name
+                        ORDER BY inventory_value DESC""",
+                    parts["params"],
+                ).fetchall()
+                by_store = [
+                    {
+                        "store_id": row["store_id"],
+                        "store": row["store_name"] or "Main Store",
+                        "quantity_on_hand": int(row["quantity_on_hand"] or 0),
+                        "inventory_value": float(row["inventory_value"] or 0),
+                        "inventory_value_display": money(row["inventory_value"]),
+                    }
+                    for row in rows
+                ]
+    return {"summary": summary, "by_store": by_store}
+
+
+def get_dashboard_product_detail(product_id, session=None):
+    try:
+        product_id = int(product_id)
+    except (TypeError, ValueError):
+        return None
+    with get_connection() as conn:
+        if not _table_exists(conn, "products"):
+            return None
+        product_columns = _columns(conn, "products")
+        joins = []
+        fields = ["p.*"]
+        if _table_exists(conn, "categories") and "category_id" in product_columns:
+            joins.append("LEFT JOIN categories cat ON cat.id = p.category_id")
+            fields.append("COALESCE(cat.name, 'Uncategorized') AS category_name")
+        else:
+            fields.append("'Uncategorized' AS category_name")
+        if _table_exists(conn, "suppliers") and "supplier_id" in product_columns:
+            joins.append("LEFT JOIN suppliers sup ON sup.id = p.supplier_id")
+            fields.append("COALESCE(sup.name, 'Unassigned') AS supplier_name")
+        else:
+            fields.append("'Unassigned' AS supplier_name")
+        row = conn.execute(
+            f"SELECT {', '.join(fields)} FROM products p {' '.join(joins)} WHERE p.id = ?",
+            (product_id,),
+        ).fetchone()
+        if not row:
+            return None
+        product = dict(row)
+
+        identifiers = []
+        if _table_exists(conn, "product_identifiers"):
+            identifiers = [
+                dict(item)
+                for item in conn.execute(
+                    """SELECT id, identifier_type, format, value, is_primary, is_active, created_at
+                       FROM product_identifiers
+                       WHERE product_id = ?
+                       ORDER BY is_primary DESC, is_active DESC, id DESC""",
+                    (product_id,),
+                ).fetchall()
+            ]
+        elif product.get("barcode"):
+            identifiers = [{
+                "id": None,
+                "identifier_type": "PRIMARY",
+                "format": "LEGACY",
+                "value": product["barcode"],
+                "is_primary": 1,
+                "is_active": 1,
+                "created_at": product.get("created_at"),
+            }]
+
+        stock_by_store = []
+        if _table_exists(conn, "store_inventory"):
+            store_join = "LEFT JOIN stores st ON st.id = si.store_id" if _table_exists(conn, "stores") else ""
+            store_name = "COALESCE(st.name, st.code, 'Store #' || si.store_id)" if _table_exists(conn, "stores") else "'Main Store'"
+            stock_by_store = [
+                {
+                    **dict(item),
+                    "inventory_value": float(item["quantity_on_hand"] or 0) * float(item["average_cost"] or 0),
+                    "inventory_value_display": money(float(item["quantity_on_hand"] or 0) * float(item["average_cost"] or 0)),
+                }
+                for item in conn.execute(
+                    f"""SELECT si.store_id, {store_name} AS store_name,
+                               si.quantity_on_hand, si.reorder_level, si.average_cost, si.updated_at
+                        FROM store_inventory si
+                        {store_join}
+                        WHERE si.product_id = ?
+                        ORDER BY store_name""",
+                    (product_id,),
+                ).fetchall()
+            ]
+
+        movements = []
+        if _table_exists(conn, "stock_movements"):
+            movements = [
+                dict(item)
+                for item in conn.execute(
+                    """SELECT sm.id, sm.movement_type, sm.quantity, sm.previous_quantity,
+                              sm.new_quantity, sm.notes, sm.created_at,
+                              COALESCE(st.name, st.code, 'Store #' || sm.store_id) AS store_name,
+                              COALESCE(u.full_name, u.username, 'system') AS username
+                       FROM stock_movements sm
+                       LEFT JOIN stores st ON st.id = sm.store_id
+                       LEFT JOIN users u ON u.id = sm.user_id
+                       WHERE sm.product_id = ?
+                       ORDER BY sm.created_at DESC, sm.id DESC
+                       LIMIT 25""",
+                    (product_id,),
+                ).fetchall()
+            ]
+
+        procurement = []
+        if _table_exists(conn, "purchase_order_items") and _table_exists(conn, "purchase_orders"):
+            procurement = [
+                dict(item)
+                for item in conn.execute(
+                    """SELECT po.id, po.reference_number, po.status, po.created_at,
+                              poi.ordered_quantity, poi.received_quantity, poi.unit_cost, poi.subtotal,
+                              COALESCE(s.name, 'Unassigned') AS supplier_name,
+                              COALESCE(st.name, st.code, 'Store #' || po.store_id) AS store_name
+                       FROM purchase_order_items poi
+                       JOIN purchase_orders po ON po.id = poi.purchase_order_id
+                       LEFT JOIN suppliers s ON s.id = po.supplier_id
+                       LEFT JOIN stores st ON st.id = po.store_id
+                       WHERE poi.product_id = ?
+                       ORDER BY po.created_at DESC, po.id DESC
+                       LIMIT 10""",
+                    (product_id,),
+                ).fetchall()
+            ]
+
+    primary_barcode = next((item["value"] for item in identifiers if item.get("is_primary") and item.get("is_active")), None)
+    product["primary_barcode"] = primary_barcode or product.get("barcode") or ""
+    product["has_barcode"] = bool(product["primary_barcode"])
+    product["selling_price_display"] = money(product.get("selling_price"))
+    product["cost_price_display"] = money(product.get("cost_price"))
+    return {
+        "product": product,
+        "identifiers": identifiers,
+        "stock_by_store": stock_by_store,
+        "movements": movements,
+        "procurement": procurement,
+        "label_actions": [
+            {"label": "Preview Label", "enabled": False},
+            {"label": "Print Label", "enabled": False},
+        ],
+    }
+
+
 def get_dashboard_summary():
     today = date.today().isoformat()
 

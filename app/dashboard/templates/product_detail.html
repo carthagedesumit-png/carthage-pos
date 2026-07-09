@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{% if not detail %}
+<section class="hero">
+    <div>
+        <h1>Product Not Found</h1>
+        <p>No product record is available for ID {{ product_id }}.</p>
+        <small>Carthage Business Operating System &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <a class="hero-link" href="/dashboard/inventory">Back to Inventory</a>
+    </div>
+</section>
+{% else %}
+<section class="hero">
+    <div>
+        <h1>{{ detail.product.name }}</h1>
+        <p>{{ detail.product.sku }} &middot; {{ detail.product.category_name }} &middot; {{ detail.product.supplier_name }}</p>
+        <small>Carthage Business Operating System &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        {% if detail.product.has_barcode %}
+        <span class="status success">{{ detail.product.primary_barcode }}</span>
+        {% else %}
+        <span class="status warning">Missing Barcode</span>
+        {% endif %}
+        <a class="hero-link" href="/dashboard/inventory">Back to Inventory</a>
+    </div>
+</section>
+
+<section class="cards">
+    <div class="card accent-blue">
+        <span>Selling Price</span>
+        <strong>{{ detail.product.selling_price_display }}</strong>
+    </div>
+    <div class="card accent-green">
+        <span>Cost Basis</span>
+        <strong>{{ detail.product.cost_price_display }}</strong>
+    </div>
+    <div class="card accent-amber">
+        <span>Status</span>
+        <strong>{{ "Active" if detail.product.is_active else "Inactive" }}</strong>
+    </div>
+    <div class="card accent-red">
+        <span>Label Actions</span>
+        <strong>Planned</strong>
+    </div>
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>Product Profile</h2>
+        <div class="detail-list">
+            <span>SKU <strong>{{ detail.product.sku }}</strong></span>
+            <span>Category <strong>{{ detail.product.category_name }}</strong></span>
+            <span>Supplier <strong>{{ detail.product.supplier_name }}</strong></span>
+            <span>Unit <strong>{{ detail.product.unit or "each" }}</strong></span>
+            <span>Description <strong>{{ detail.product.description or "No description" }}</strong></span>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Barcode Identifiers</h2>
+        {% if detail.identifiers %}
+        <div class="detail-list">
+            {% for identifier in detail.identifiers %}
+            <span>
+                {{ identifier.identifier_type }} {{ identifier.format }}
+                <strong>{{ identifier.value }}{% if identifier.is_primary %} Primary{% endif %}</strong>
+            </span>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No barcode identifiers are recorded.</p>
+        {% endif %}
+    </div>
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>Stock by Store</h2>
+        {% if detail.stock_by_store %}
+        <div class="table-scroll">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Store</th>
+                        <th>Qty</th>
+                        <th>Reorder</th>
+                        <th>Avg Cost</th>
+                        <th>Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in detail.stock_by_store %}
+                    <tr>
+                        <td>{{ item.store_name }}</td>
+                        <td>{{ item.quantity_on_hand }}</td>
+                        <td>{{ item.reorder_level }}</td>
+                        <td>{{ item.average_cost }}</td>
+                        <td>{{ item.inventory_value_display }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="empty-state">No store stock records are available.</p>
+        {% endif %}
+    </div>
+
+    <div class="panel">
+        <h2>Label Foundation</h2>
+        <div class="quick-actions label-actions">
+            {% for action in detail.label_actions %}
+            <a class="disabled-action" href="#">{{ action.label }}</a>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>Stock Movement History</h2>
+        {% if detail.movements %}
+        <div class="table-scroll">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Qty</th>
+                        <th>Previous</th>
+                        <th>New</th>
+                        <th>Store</th>
+                        <th>User</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in detail.movements %}
+                    <tr>
+                        <td>{{ item.movement_type }}</td>
+                        <td>{{ item.quantity }}</td>
+                        <td>{{ item.previous_quantity }}</td>
+                        <td>{{ item.new_quantity }}</td>
+                        <td>{{ item.store_name }}</td>
+                        <td>{{ item.username }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="empty-state">No stock movements are recorded.</p>
+        {% endif %}
+    </div>
+
+    <div class="panel">
+        <h2>Procurement History</h2>
+        {% if detail.procurement %}
+        <div class="detail-list">
+            {% for item in detail.procurement %}
+            <span>{{ item.reference_number }} {{ item.status }} <strong>{{ item.received_quantity }}/{{ item.ordered_quantity }}</strong></span>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No purchase order history is available.</p>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
+{% endblock %}

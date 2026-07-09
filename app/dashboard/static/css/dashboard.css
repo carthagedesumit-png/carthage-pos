@@ -419,6 +419,8 @@ body {
 
 .sales-workspace,
 .sales-table-panel,
+.inventory-workspace,
+.inventory-table-panel,
 .receipt-panel {
     margin-top: 24px;
 }
@@ -440,6 +442,16 @@ body {
     color: var(--muted);
     font-size: 13px;
     font-weight: 700;
+}
+
+.filter-form .check-filter {
+    min-height: 70px;
+    justify-content: end;
+}
+
+.filter-form .check-filter input {
+    width: 22px;
+    min-height: 22px;
 }
 
 .filter-form input,
@@ -510,6 +522,10 @@ body {
     min-width: 1080px;
 }
 
+.inventory-table {
+    min-width: 1320px;
+}
+
 .badge {
     display: inline-block;
     border-radius: 999px;
@@ -529,6 +545,24 @@ body {
 .badge-partial-refund {
     background: #fef3c7;
     color: #92400e;
+}
+
+.badge-inactive,
+.badge-out-of-stock,
+.badge-missing-barcode {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.badge-low-stock {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.badge-active,
+.badge-in-stock {
+    background: #dcfce7;
+    color: #166534;
 }
 
 .pagination {
@@ -590,6 +624,13 @@ body {
     background: #0f172a;
     color: #f8fafc;
     line-height: 1.45;
+}
+
+.label-actions .disabled-action {
+    color: #94a3b8;
+    background: #f8fafc;
+    border-color: var(--border);
+    cursor: not-allowed;
 }
 
 @media (max-width: 640px) {

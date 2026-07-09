@@ -1,6 +1,7 @@
 # carthage-pos
 
-Enterprise-grade supermarket POS terminal engine for inventory management and sales tracking.
+Carthage Business Operating System with an enterprise-grade supermarket POS
+module for inventory management and sales tracking.
 
 ## Features
 
@@ -58,9 +59,10 @@ Open `http://127.0.0.1:8000/docs` for the interactive API reference. See
 the error contract.
 
 The browser dashboard is available under `/dashboard` when the API app is
-running. The Sales Workspace at `/dashboard/sales` provides read-only sales
-management filters, pagination, sale detail pages, and lightweight dashboard
-JSON endpoints. See [`docs/dashboard.md`](docs/dashboard.md).
+running. The Sales Workspace at `/dashboard/sales` and Inventory Workspace at
+`/dashboard/inventory` provide read-only management filters, pagination, detail
+pages, and lightweight dashboard JSON endpoints. See
+[`docs/dashboard.md`](docs/dashboard.md).
 
 Hardware configuration and mock-device testing are documented in
 [`docs/hardware.md`](docs/hardware.md).
