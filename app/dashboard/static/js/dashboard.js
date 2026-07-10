@@ -4,8 +4,14 @@ async function fetchJson(url) {
     return await response.json();
 }
 
+function setDashboardLoading(visible) {
+    const el = document.getElementById("dashboardLoading");
+    if (!el) return;
+    el.classList.toggle("visible", visible);
+}
+
 function formatMoney(value) {
-    return `₦${Number(value || 0).toLocaleString(undefined, {
+    return `NGN ${Number(value || 0).toLocaleString(undefined, {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2
     })}`;
@@ -16,6 +22,11 @@ function renderSalesTrend(trend) {
     if (!container) return;
 
     container.innerHTML = "";
+
+    if (!trend.length) {
+        container.innerHTML = `<p class="empty-state">No sales trend data yet.</p>`;
+        return;
+    }
 
     const max = Math.max(...trend.map(item => item.sales), 1);
 
@@ -50,15 +61,21 @@ function renderInsights(insights) {
     const container = document.getElementById("businessInsights");
     if (!container) return;
 
+    if (!insights.length) {
+        container.innerHTML = `<p class="empty-state">No insights available yet.</p>`;
+        return;
+    }
+
     container.innerHTML = insights.map(item => `
         <div class="notification-item">
-            <strong>💡 Insight</strong>
+            <strong>Insight</strong>
             <span>${item}</span>
         </div>
     `).join("");
 }
 
 async function loadBusinessIntelligence() {
+    setDashboardLoading(true);
     try {
         const trend = await fetchJson("/dashboard/api/sales-trend");
         renderSalesTrend(trend.trend || []);
@@ -70,6 +87,8 @@ async function loadBusinessIntelligence() {
         renderInsights(insights.insights || []);
     } catch (error) {
         console.error("Dashboard BI load failed", error);
+    } finally {
+        setDashboardLoading(false);
     }
 }
 

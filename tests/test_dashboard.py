@@ -1,6 +1,7 @@
 import unittest
 import os
 import tempfile
+import warnings
 
 from fastapi.testclient import TestClient
 
@@ -40,6 +41,35 @@ class DashboardTestCase(unittest.TestCase):
         self.assertIn("Executive Dashboard", response.text)
         self.assertIn("Today's Sales", response.text)
         self.assertIn("Inventory Value", response.text)
+
+    def test_dashboard_navigation_and_template_response_are_release_candidate_ready(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            response = self.client.get("/dashboard/")
+
+        self.assertEqual(response.status_code, 200)
+        for label in [
+            "Dashboard",
+            "Sales",
+            "Inventory",
+            "CRM",
+            "Procurement",
+            "Reports",
+            "Administration",
+            "Settings",
+            "Logout",
+        ]:
+            self.assertIn(label, response.text)
+        self.assertIn('aria-current="page"', response.text)
+        self.assertNotIn(
+            "TemplateResponse(name",
+            "\n".join(str(item.message) for item in caught),
+        )
+
+    def test_dashboard_invalid_ids_render_friendly_error_page(self):
+        response = self.client.get("/dashboard/sales/not-a-number")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("We could not read that dashboard request.", response.text)
 
 
 class DashboardSalesWorkspaceTestCase(unittest.TestCase):

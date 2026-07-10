@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="hero">
+    <div>
+        <h1>{{ page_title }}</h1>
+        <p>{{ page_subtitle }}</p>
+        <small>Status {{ status_code }} &middot; {{ header.store }}</small>
+    </div>
+
+    <div class="hero-status">
+        <span class="status warning">Action Required</span>
+    </div>
+</section>
+
+<section class="panel">
+    <div class="empty-state">
+        <strong>Nothing was changed.</strong>
+        <p>Return to the dashboard or adjust the request and try again.</p>
+    </div>
+    <div class="filter-actions">
+        <a href="/dashboard/">Dashboard</a>
+    </div>
+</section>
+
+{% endblock %}

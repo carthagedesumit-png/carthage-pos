@@ -1,7 +1,15 @@
-# carthage-pos
+# Carthage Business Operating System
 
 Carthage Business Operating System (CBOS) with an enterprise-grade supermarket
 POS module for inventory management and sales tracking.
+
+## Release Candidate Preparation
+
+CBOS is in the Release Candidate Preparation phase for external beta
+deployment. The current hardening pass focuses on stability, dashboard
+consistency, framework compatibility, friendly error handling, masked
+configuration exposure, and regression-free quality checks rather than new
+business modules.
 
 ## Features
 
@@ -59,16 +67,11 @@ Open `http://127.0.0.1:8000/docs` for the interactive API reference. See
 the error contract.
 
 The browser dashboard is available under `/dashboard` when the API app is
-running. The Sales Workspace at `/dashboard/sales`, Inventory Workspace at
-`/dashboard/inventory`, CRM Workspace at `/dashboard/customers`, and Procurement
-Workspace at `/dashboard/procurement` provide read-only management filters,
-pagination, detail pages, and lightweight dashboard JSON endpoints. The Reports
-& Analytics Workspace at `/dashboard/reports` surfaces CBOS executive
-intelligence with sales, product, cashier, store, customer, inventory,
-procurement, and refund analytics. The Administration Workspace at
-`/dashboard/system` centralizes read-only system control views for users,
-licensing, backups, deployment, hardware, and sanitized configuration. See
-[`docs/dashboard.md`](docs/dashboard.md).
+running. Dashboard, Sales, Inventory, CRM, Procurement, Reports, and
+Administration workspaces provide read-only management filters, pagination,
+detail pages, lightweight JSON endpoints, consistent navigation highlighting,
+and safe empty-state behavior. Settings and Logout are present as placeholders
+for the beta navigation shell. See [`docs/dashboard.md`](docs/dashboard.md).
 
 Hardware configuration and mock-device testing are documented in
 [`docs/hardware.md`](docs/hardware.md).

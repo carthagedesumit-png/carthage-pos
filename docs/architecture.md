@@ -1,12 +1,13 @@
-# Carthage POS Architecture
+# Carthage Business Operating System Architecture
 
 ## Overview
 
-Carthage POS is a layered Python application backed by SQLite. Terminal and
-future UI/API adapters call service functions; services enforce authorization
-and business rules; database modules own connections, schema migration, and
-transaction boundaries. Reporting and document generation are read-oriented
-consumers of persisted business records.
+Carthage Business Operating System (CBOS) is a layered Python application
+backed by SQLite. The POS remains the core operating module. Terminal,
+dashboard, and API adapters call service functions; services enforce
+authorization and business rules; database modules own connections, schema
+migration, and transaction boundaries. Reporting and document generation are
+read-oriented consumers of persisted business records.
 
 Dependencies flow inward:
 
@@ -59,6 +60,22 @@ Dependencies flow inward:
   fingerprints, offline activation, trial/grace lifecycle, edition policy, and
   centrally enforced feature/resource limits. Issuer private keys never enter
   runtime application modules or production packages.
+
+## Release Candidate Hardening
+
+The Release Candidate Preparation V1 phase avoids new business modules and
+focuses on beta deployment quality:
+
+- Dashboard HTML rendering uses modern Starlette/FastAPI template response
+  calling conventions through a shared dashboard render helper.
+- Browser dashboard failures are translated into sanitized, friendly HTML
+  responses while API routes preserve the JSON error contract.
+- Dashboard navigation, product naming, loading states, empty states, and
+  Administration labels are kept consistent across workspaces.
+- Read-model helpers favor focused aggregate queries and schema-safe fallbacks
+  over duplicated dashboard queries.
+- Logs record stable event names, method, path, status, duration, and exception
+  type without exposing secrets or local configuration values.
 
 ## Service Interactions
 

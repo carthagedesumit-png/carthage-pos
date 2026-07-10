@@ -335,6 +335,21 @@ These endpoints use dashboard-specific read helpers and return schema-safe
 empty structures when optional platform tables, backup manifests, deployment
 state, hardware managers, or license files are unavailable.
 
+## Release Candidate Hardening
+
+The Release Candidate Preparation V1 pass keeps the dashboard feature set
+stable while improving beta readiness:
+
+- Dashboard templates render through the request-first Starlette
+  `TemplateResponse` signature to avoid framework deprecation warnings.
+- Shared navigation now uses the CBOS product name, consistent page
+  highlighting, Administration naming, and Settings/Logout placeholders.
+- Dashboard page validation errors and unexpected exceptions render a friendly
+  HTML error page while dashboard API routes continue to return JSON errors.
+- Administration summaries use focused aggregate counts for user totals and do
+  not perform per-row database calls for unused values.
+- Browser widgets include explicit loading and empty states for BI summaries.
+
 ## Authorization Foundation
 
 The current dashboard has a placeholder identity boundary in the dashboard

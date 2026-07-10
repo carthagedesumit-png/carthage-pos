@@ -1,4 +1,4 @@
-"""FastAPI application factory for Carthage POS."""
+"""FastAPI application factory for Carthage Business Operating System."""
 
 from contextlib import asynccontextmanager
 from time import perf_counter
@@ -31,8 +31,8 @@ def create_app(*, initialize: bool = True) -> FastAPI:
         yield
 
     application = FastAPI(
-        title="Carthage POS API",
-        description="Store-aware REST integration layer for Carthage POS services.",
+        title="Carthage Business Operating System API",
+        description="Store-aware REST integration layer for CBOS services.",
         version=APP_VERSION,
         lifespan=lifespan,
         docs_url="/docs",

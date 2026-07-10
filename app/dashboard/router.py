@@ -54,6 +54,11 @@ templates = Jinja2Templates(directory="app/dashboard/templates")
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
+def render_template(request: Request, template_name: str, context: dict, **kwargs):
+    context = {"request": request, **context}
+    return templates.TemplateResponse(request, template_name, context, **kwargs)
+
+
 def get_header():
     return {
         "user": "Administrator",
@@ -72,11 +77,11 @@ def render_workspace(
     main_panel_text: str,
     steps: list[dict],
 ):
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "workspace.html",
         {
-            "request": request,
-            "title": f"{page_title} - Carthage POS",
+            "title": f"{page_title} - Carthage Business Operating System",
             "header": get_header(),
             "active_page": active_page,
             "page_title": page_title,
@@ -91,11 +96,11 @@ def render_workspace(
 
 @router.get("/", response_class=HTMLResponse)
 def dashboard_home(request: Request):
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "overview.html",
         {
-            "request": request,
-            "title": "Carthage POS Executive Dashboard",
+            "title": "CBOS Executive Dashboard",
             "metrics": get_dashboard_summary(),
             "header": get_header(),
             "active_page": "dashboard",
@@ -131,11 +136,11 @@ def dashboard_sales(
             "page_size": page_size,
         }
     )
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "sales.html",
         {
-            "request": request,
-            "title": "Sales Workspace - Carthage POS",
+            "title": "Sales Workspace - Carthage Business Operating System",
             "header": get_header(),
             "active_page": "sales",
             "page_title": "Sales Workspace",
@@ -154,11 +159,11 @@ def dashboard_sales(
 def dashboard_sale_detail(request: Request, sale_id: int):
     detail = get_dashboard_sale_detail(sale_id)
     if not detail:
-        return templates.TemplateResponse(
+        return render_template(
+            request,
             "sale_detail.html",
             {
-                "request": request,
-                "title": "Sale Not Found - Carthage POS",
+                "title": "Sale Not Found - Carthage Business Operating System",
                 "header": get_header(),
                 "active_page": "sales",
                 "detail": None,
@@ -166,11 +171,11 @@ def dashboard_sale_detail(request: Request, sale_id: int):
             },
             status_code=404,
         )
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "sale_detail.html",
         {
-            "request": request,
-            "title": f"Sale {detail['sale']['receipt_number']} - Carthage POS",
+            "title": f"Sale {detail['sale']['receipt_number']} - Carthage Business Operating System",
             "header": get_header(),
             "active_page": "sales",
             "detail": detail,
@@ -207,7 +212,8 @@ def dashboard_inventory(
             "page_size": page_size,
         }
     )
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "inventory.html",
         {
             "request": request,
@@ -230,7 +236,8 @@ def dashboard_inventory(
 def dashboard_product_detail(request: Request, product_id: int):
     detail = get_dashboard_product_detail(product_id)
     if not detail:
-        return templates.TemplateResponse(
+        return render_template(
+            request,
             "product_detail.html",
             {
                 "request": request,
@@ -242,7 +249,8 @@ def dashboard_product_detail(request: Request, product_id: int):
             },
             status_code=404,
         )
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "product_detail.html",
         {
             "request": request,
@@ -283,7 +291,8 @@ def dashboard_customers(
             "page_size": page_size,
         }
     )
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "customers.html",
         {
             "request": request,
@@ -305,7 +314,8 @@ def dashboard_customers(
 def dashboard_customer_detail(request: Request, customer_id: int):
     detail = get_dashboard_customer_detail(customer_id)
     if not detail:
-        return templates.TemplateResponse(
+        return render_template(
+            request,
             "customer_detail.html",
             {
                 "request": request,
@@ -317,7 +327,8 @@ def dashboard_customer_detail(request: Request, customer_id: int):
             },
             status_code=404,
         )
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "customer_detail.html",
         {
             "request": request,
@@ -362,7 +373,8 @@ def dashboard_procurement(
             "page_size": page_size,
         }
     )
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "procurement.html",
         {
             "request": request,
@@ -384,7 +396,8 @@ def dashboard_procurement(
 def dashboard_purchase_order_detail(request: Request, purchase_order_id: int):
     detail = get_dashboard_purchase_order_detail(purchase_order_id)
     if not detail:
-        return templates.TemplateResponse(
+        return render_template(
+            request,
             "purchase_order_detail.html",
             {
                 "request": request,
@@ -396,7 +409,8 @@ def dashboard_purchase_order_detail(request: Request, purchase_order_id: int):
             },
             status_code=404,
         )
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "purchase_order_detail.html",
         {
             "request": request,
@@ -413,7 +427,8 @@ def dashboard_purchase_order_detail(request: Request, purchase_order_id: int):
 def dashboard_supplier_detail(request: Request, supplier_id: int):
     detail = get_dashboard_supplier_detail(supplier_id)
     if not detail:
-        return templates.TemplateResponse(
+        return render_template(
+            request,
             "supplier_detail.html",
             {
                 "request": request,
@@ -425,7 +440,8 @@ def dashboard_supplier_detail(request: Request, supplier_id: int):
             },
             status_code=404,
         )
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "supplier_detail.html",
         {
             "request": request,
@@ -481,7 +497,8 @@ def dashboard_reports(
             product_id, category_id, supplier_id, report_type,
         )
     )
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "reports.html",
         {
             "request": request,
@@ -498,43 +515,140 @@ def dashboard_reports(
 
 
 @router.get("/reports/sales", response_class=HTMLResponse)
-def dashboard_reports_sales(request: Request, date_from: str = "", date_to: str = "", store_id: int | None = Query(default=None), cashier_id: int | None = Query(default=None), customer_id: int | None = Query(default=None)):
+def dashboard_reports_sales(
+    request: Request,
+    date_from: str = "",
+    date_to: str = "",
+    store_id: int | None = Query(default=None),
+    cashier_id: int | None = Query(default=None),
+    customer_id: int | None = Query(default=None),
+):
     filters = report_filter_payload(date_from, date_to, store_id, cashier_id, customer_id, None, None, None, "sales")
-    return templates.TemplateResponse("report_detail.html", {"request": request, "title": "Sales Reports - Carthage Business Operating System", "header": get_header(), "active_page": "reports", "section": "sales", "page_title": "Sales Reports", "page_subtitle": "Sales, refunds, discounts, profit, average transaction value, and top product trends.", "filters": get_dashboard_report_sales(filters)["filters"], "report": get_dashboard_report_sales(filters), "report_types": REPORT_TYPES})
+    report = get_dashboard_report_sales(filters)
+    return render_template(
+        request,
+        "report_detail.html",
+        {
+            "title": "Sales Reports - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "reports",
+            "section": "sales",
+            "page_title": "Sales Reports",
+            "page_subtitle": "Sales, refunds, discounts, profit, average transaction value, and top product trends.",
+            "filters": report["filters"],
+            "report": report,
+            "report_types": REPORT_TYPES,
+        },
+    )
 
 
 @router.get("/reports/inventory", response_class=HTMLResponse)
-def dashboard_reports_inventory(request: Request, store_id: int | None = Query(default=None), product_id: int | None = Query(default=None), category_id: int | None = Query(default=None), supplier_id: int | None = Query(default=None)):
+def dashboard_reports_inventory(
+    request: Request,
+    store_id: int | None = Query(default=None),
+    product_id: int | None = Query(default=None),
+    category_id: int | None = Query(default=None),
+    supplier_id: int | None = Query(default=None),
+):
     filters = report_filter_payload("", "", store_id, None, None, product_id, category_id, supplier_id, "inventory")
     report = get_dashboard_report_inventory(filters)
-    return templates.TemplateResponse("report_detail.html", {"request": request, "title": "Inventory Reports - Carthage Business Operating System", "header": get_header(), "active_page": "reports", "section": "inventory", "page_title": "Inventory Reports", "page_subtitle": "Inventory valuation, low-stock analytics, category value, and product stock exposure.", "filters": report["filters"], "report": report, "report_types": REPORT_TYPES})
+    return render_template(
+        request,
+        "report_detail.html",
+        {
+            "title": "Inventory Reports - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "reports",
+            "section": "inventory",
+            "page_title": "Inventory Reports",
+            "page_subtitle": "Inventory valuation, low-stock analytics, category value, and product stock exposure.",
+            "filters": report["filters"],
+            "report": report,
+            "report_types": REPORT_TYPES,
+        },
+    )
 
 
 @router.get("/reports/customers", response_class=HTMLResponse)
-def dashboard_reports_customers(request: Request, date_from: str = "", date_to: str = "", store_id: int | None = Query(default=None), customer_id: int | None = Query(default=None)):
+def dashboard_reports_customers(
+    request: Request,
+    date_from: str = "",
+    date_to: str = "",
+    store_id: int | None = Query(default=None),
+    customer_id: int | None = Query(default=None),
+):
     filters = report_filter_payload(date_from, date_to, store_id, None, customer_id, None, None, None, "customers")
     report = get_dashboard_report_customers(filters)
-    return templates.TemplateResponse("report_detail.html", {"request": request, "title": "Customer Reports - Carthage Business Operating System", "header": get_header(), "active_page": "reports", "section": "customers", "page_title": "Customer Reports", "page_subtitle": "Customer value, credit exposure, wallet balances, loyalty, and purchase concentration.", "filters": report["filters"], "report": report, "report_types": REPORT_TYPES})
+    return render_template(
+        request,
+        "report_detail.html",
+        {
+            "title": "Customer Reports - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "reports",
+            "section": "customers",
+            "page_title": "Customer Reports",
+            "page_subtitle": "Customer value, credit exposure, wallet balances, loyalty, and purchase concentration.",
+            "filters": report["filters"],
+            "report": report,
+            "report_types": REPORT_TYPES,
+        },
+    )
 
 
 @router.get("/reports/procurement", response_class=HTMLResponse)
-def dashboard_reports_procurement(request: Request, date_from: str = "", date_to: str = "", store_id: int | None = Query(default=None), supplier_id: int | None = Query(default=None)):
+def dashboard_reports_procurement(
+    request: Request,
+    date_from: str = "",
+    date_to: str = "",
+    store_id: int | None = Query(default=None),
+    supplier_id: int | None = Query(default=None),
+):
     filters = report_filter_payload(date_from, date_to, store_id, None, None, None, None, supplier_id, "procurement")
     report = get_dashboard_report_procurement(filters)
-    return templates.TemplateResponse("report_detail.html", {"request": request, "title": "Procurement Reports - Carthage Business Operating System", "header": get_header(), "active_page": "reports", "section": "procurement", "page_title": "Procurement Reports", "page_subtitle": "Purchase order value, supplier activity, receiving progress, and open replenishment.", "filters": report["filters"], "report": report, "report_types": REPORT_TYPES})
+    return render_template(
+        request,
+        "report_detail.html",
+        {
+            "title": "Procurement Reports - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "reports",
+            "section": "procurement",
+            "page_title": "Procurement Reports",
+            "page_subtitle": "Purchase order value, supplier activity, receiving progress, and open replenishment.",
+            "filters": report["filters"],
+            "report": report,
+            "report_types": REPORT_TYPES,
+        },
+    )
 
 
 @router.get("/reports/stores", response_class=HTMLResponse)
 def dashboard_reports_stores(request: Request, store_id: int | None = Query(default=None)):
     filters = report_filter_payload("", "", store_id, None, None, None, None, None, "stores")
     report = get_dashboard_report_stores(filters)
-    return templates.TemplateResponse("report_detail.html", {"request": request, "title": "Store Reports - Carthage Business Operating System", "header": get_header(), "active_page": "reports", "section": "stores", "page_title": "Store Reports", "page_subtitle": "Branch comparison across sales, refunds, transactions, and inventory value.", "filters": report["filters"], "report": report, "report_types": REPORT_TYPES})
+    return render_template(
+        request,
+        "report_detail.html",
+        {
+            "title": "Store Reports - Carthage Business Operating System",
+            "header": get_header(),
+            "active_page": "reports",
+            "section": "stores",
+            "page_title": "Store Reports",
+            "page_subtitle": "Branch comparison across sales, refunds, transactions, and inventory value.",
+            "filters": report["filters"],
+            "report": report,
+            "report_types": REPORT_TYPES,
+        },
+    )
 
 
 @router.get("/system", response_class=HTMLResponse)
 def dashboard_system(request: Request):
     summary = get_dashboard_system_summary()
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "system.html",
         {
             "request": request,
@@ -560,7 +674,8 @@ def dashboard_system_users(
     result = list_dashboard_system_users(
         {"search": search, "role": role, "active": active, "page": page, "page_size": page_size}
     )
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "system_users.html",
         {
             "request": request,
@@ -580,7 +695,8 @@ def dashboard_system_users(
 def dashboard_system_user_detail(request: Request, user_id: int):
     detail = get_dashboard_system_user_detail(user_id)
     if not detail:
-        return templates.TemplateResponse(
+        return render_template(
+            request,
             "system_user_detail.html",
             {
                 "request": request,
@@ -592,7 +708,8 @@ def dashboard_system_user_detail(request: Request, user_id: int):
             },
             status_code=404,
         )
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "system_user_detail.html",
         {
             "request": request,
@@ -607,7 +724,8 @@ def dashboard_system_user_detail(request: Request, user_id: int):
 
 @router.get("/system/licensing", response_class=HTMLResponse)
 def dashboard_system_licensing(request: Request):
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "system_detail.html",
         {"request": request, "title": "Licensing - Carthage Business Operating System", "header": get_header(), "active_page": "system", "section": "licensing", "page_title": "Licensing", "page_subtitle": "License state, edition policy, and activation foundations.", "detail": get_dashboard_system_licensing()},
     )
@@ -615,7 +733,8 @@ def dashboard_system_licensing(request: Request):
 
 @router.get("/system/backups", response_class=HTMLResponse)
 def dashboard_system_backups(request: Request):
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "system_detail.html",
         {"request": request, "title": "Backups - Carthage Business Operating System", "header": get_header(), "active_page": "system", "section": "backups", "page_title": "Backups", "page_subtitle": "Backup inventory, latest backup metadata, and restore foundations.", "detail": get_dashboard_system_backups()},
     )
@@ -623,7 +742,8 @@ def dashboard_system_backups(request: Request):
 
 @router.get("/system/deployment", response_class=HTMLResponse)
 def dashboard_system_deployment(request: Request):
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "system_detail.html",
         {"request": request, "title": "Deployment - Carthage Business Operating System", "header": get_header(), "active_page": "system", "section": "deployment", "page_title": "Deployment", "page_subtitle": "Installation health, version compatibility, and update readiness.", "detail": get_dashboard_system_deployment()},
     )
@@ -631,7 +751,8 @@ def dashboard_system_deployment(request: Request):
 
 @router.get("/system/hardware", response_class=HTMLResponse)
 def dashboard_system_hardware(request: Request):
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "system_detail.html",
         {"request": request, "title": "Hardware - Carthage Business Operating System", "header": get_header(), "active_page": "system", "section": "hardware", "page_title": "Hardware", "page_subtitle": "Peripheral availability for printers, cash drawer, scanner, and display.", "detail": get_dashboard_system_hardware()},
     )
@@ -639,7 +760,8 @@ def dashboard_system_hardware(request: Request):
 
 @router.get("/system/configuration", response_class=HTMLResponse)
 def dashboard_system_configuration(request: Request):
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "system_detail.html",
         {"request": request, "title": "Configuration - Carthage Business Operating System", "header": get_header(), "active_page": "system", "section": "configuration", "page_title": "Configuration", "page_subtitle": "Read-only sanitized process configuration.", "detail": get_dashboard_system_configuration()},
     )
@@ -1138,7 +1260,8 @@ def dashboard_health():
 
 @router.get("/login", response_class=HTMLResponse)
 def dashboard_login(request: Request):
-    return templates.TemplateResponse(
+    return render_template(
+        request,
         "login.html",
         {
             "request": request,

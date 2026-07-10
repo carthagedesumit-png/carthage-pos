@@ -15,22 +15,26 @@
     <aside class="sidebar">
 
         <div class="sidebar-brand">
-            <h2>Carthage POS</h2>
+            <h2>CBOS</h2>
+            <span>Carthage Business Operating System</span>
         </div>
 
         <nav class="sidebar-menu">
-            <a class="{{ 'active' if active_page == 'dashboard' else '' }}" href="/dashboard/">🏠 Dashboard</a>
-            <a class="{{ 'active' if active_page == 'sales' else '' }}" href="/dashboard/sales">🛒 Sales</a>
-            <a class="{{ 'active' if active_page == 'inventory' else '' }}" href="/dashboard/inventory">📦 Inventory</a>
-            <a class="{{ 'active' if active_page == 'customers' else '' }}" href="/dashboard/customers">👥 Customers</a>
-            <a class="{{ 'active' if active_page == 'procurement' else '' }}" href="/dashboard/procurement">🚚 Procurement</a>
-            <a class="{{ 'active' if active_page == 'reports' else '' }}" href="/dashboard/reports">📈 Reports</a>
-            <a class="{{ 'active' if active_page == 'system' else '' }}" href="/dashboard/system">⚙ System</a>
+            <a class="{{ 'active' if active_page == 'dashboard' else '' }}" href="/dashboard/" {% if active_page == 'dashboard' %}aria-current="page"{% endif %}>Dashboard</a>
+            <a class="{{ 'active' if active_page == 'sales' else '' }}" href="/dashboard/sales" {% if active_page == 'sales' %}aria-current="page"{% endif %}>Sales</a>
+            <a class="{{ 'active' if active_page == 'inventory' else '' }}" href="/dashboard/inventory" {% if active_page == 'inventory' %}aria-current="page"{% endif %}>Inventory</a>
+            <a class="{{ 'active' if active_page == 'customers' else '' }}" href="/dashboard/customers" {% if active_page == 'customers' %}aria-current="page"{% endif %}>CRM</a>
+            <a class="{{ 'active' if active_page == 'procurement' else '' }}" href="/dashboard/procurement" {% if active_page == 'procurement' %}aria-current="page"{% endif %}>Procurement</a>
+            <a class="{{ 'active' if active_page == 'reports' else '' }}" href="/dashboard/reports" {% if active_page == 'reports' %}aria-current="page"{% endif %}>Reports</a>
+            <a class="{{ 'active' if active_page == 'system' else '' }}" href="/dashboard/system" {% if active_page == 'system' %}aria-current="page"{% endif %}>Administration</a>
+            <a class="placeholder" href="#" aria-disabled="true">Settings</a>
+            <a class="placeholder" href="#" aria-disabled="true">Logout</a>
         </nav>
 
     </aside>
 
     <main class="content">
+        <div class="loading-indicator" id="dashboardLoading" aria-live="polite">Loading...</div>
         {% block content %}
         {% endblock %}
     </main>

@@ -36,8 +36,17 @@ body {
 }
 
 .sidebar-brand h2 {
-    margin: 0 0 30px;
+    margin: 0 0 6px;
     font-size: 22px;
+}
+
+.sidebar-brand span {
+    display: block;
+    margin-bottom: 28px;
+    color: #94a3b8;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.4;
 }
 
 .sidebar-menu {
@@ -49,8 +58,8 @@ body {
 .sidebar-menu a {
     color: #cbd5e1;
     text-decoration: none;
-    padding: 14px 14px;
-    border-radius: 10px;
+    padding: 12px 14px;
+    border-radius: 8px;
     font-weight: 600;
 }
 
@@ -348,6 +357,35 @@ body {
 .sidebar-menu a.active {
     background: #2563eb;
     color: white;
+}
+
+.sidebar-menu a.placeholder {
+    color: #94a3b8;
+    cursor: not-allowed;
+    opacity: 0.78;
+}
+
+.sidebar-menu a.placeholder:hover {
+    background: transparent;
+    color: #94a3b8;
+}
+
+.loading-indicator {
+    display: none;
+    position: sticky;
+    top: 0;
+    z-index: 900;
+    margin-bottom: 12px;
+    border: 1px solid #bfdbfe;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: #eff6ff;
+    color: #1e40af;
+    font-weight: 800;
+}
+
+.loading-indicator.visible {
+    display: block;
 }
 
 /* Dashboard V6 BI widgets */

@@ -1,7 +1,5 @@
 from dataclasses import asdict, is_dataclass
 from math import ceil
-from pathlib import Path
-from typing import Any
 
 from auth import UserSession
 from app.core.config import get_config
@@ -64,8 +62,6 @@ def _database_version():
 
 def _format_user(row):
     active = bool(row["is_active"])
-    with get_connection() as conn:
-        store_count = count_table(conn, "stores")
     return {
         "id": row["id"],
         "username": row["username"],
@@ -184,6 +180,25 @@ def get_dashboard_system_user_detail(user_id):
             {"label": "Reset Password", "enabled": False},
             {"label": "Deactivate User", "enabled": False},
         ],
+    }
+
+
+def _dashboard_user_totals():
+    with get_connection() as conn:
+        if not _table_exists(conn, "users"):
+            return {"total": 0, "active": 0, "inactive": 0}
+        row = conn.execute(
+            """SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN COALESCE(is_active, 1) = 1 THEN 1 ELSE 0 END) AS active,
+                    SUM(CASE WHEN COALESCE(is_active, 1) = 0 THEN 1 ELSE 0 END) AS inactive
+               FROM users
+               WHERE username != 'system'"""
+        ).fetchone()
+    return {
+        "total": int(row["total"] or 0),
+        "active": int(row["active"] or 0),
+        "inactive": int(row["inactive"] or 0),
     }
 
 
@@ -386,9 +401,7 @@ def get_dashboard_system_activity(limit=25):
 
 
 def get_dashboard_system_summary():
-    users = list_dashboard_system_users({"active": "all", "page_size": 1})
-    active_users = list_dashboard_system_users({"active": "active", "page_size": 1})["pagination"]["total"]
-    inactive_users = list_dashboard_system_users({"active": "inactive", "page_size": 1})["pagination"]["total"]
+    user_totals = _dashboard_user_totals()
     licensing = get_dashboard_system_licensing()
     backups = get_dashboard_system_backups()
     deployment = get_dashboard_system_deployment()
@@ -411,9 +424,9 @@ def get_dashboard_system_summary():
         "backup_status": "Ready" if backup_count else "No Backups",
         "deployment_status": deployment_status,
         "hardware_status": hardware_status,
-        "user_count": users["pagination"]["total"],
-        "active_users": active_users,
-        "inactive_users": inactive_users,
+        "user_count": user_totals["total"],
+        "active_users": user_totals["active"],
+        "inactive_users": user_totals["inactive"],
         "store_count": store_count,
         "configuration_summary": {
             "currency": configuration["sections"]["deployment"]["currency"],
@@ -425,7 +438,7 @@ def get_dashboard_system_summary():
             {"label": "API", "value": api_status, "accent": "accent-blue"},
             {"label": "License", "value": license_state, "accent": "accent-green"},
             {"label": "Backups", "value": backup_count, "accent": "accent-amber"},
-            {"label": "Users", "value": users["pagination"]["total"], "accent": "accent-red"},
+            {"label": "Users", "value": user_totals["total"], "accent": "accent-red"},
         ],
         "versions": versions,
         "licensing": licensing,
