@@ -4,11 +4,11 @@ from dataclasses import asdict, dataclass
 import re
 
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.0-rc.1"
 DATABASE_SCHEMA_VERSION = 1
 MIGRATION_VERSION = 1
 API_VERSION = "1.0"
-INSTALLER_VERSION = "1.0.0"
+INSTALLER_VERSION = APP_VERSION
 MIN_SUPPORTED_DATABASE_VERSION = 0
 
 
@@ -24,11 +24,17 @@ class VersionInfo:
         return asdict(self)
 
 
-def parse_version(value: str) -> tuple[int, int, int]:
-    match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", str(value or ""))
+def parse_version(value: str) -> tuple[int, int, int, int, int]:
+    match = re.fullmatch(
+        r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-rc\.(0|[1-9][0-9]*))?",
+        str(value or ""),
+    )
     if not match:
-        raise ValueError("Version must use semantic MAJOR.MINOR.PATCH format.")
-    return tuple(int(part) for part in match.groups())
+        raise ValueError("Version must use semantic MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-rc.N format.")
+    major, minor, patch, rc_number = match.groups()
+    prerelease_rank = 1 if rc_number is None else 0
+    prerelease_number = 0 if rc_number is None else int(rc_number)
+    return int(major), int(minor), int(patch), prerelease_rank, prerelease_number
 
 
 def compare_versions(left: str, right: str) -> int:

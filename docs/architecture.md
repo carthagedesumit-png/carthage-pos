@@ -77,6 +77,18 @@ focuses on beta deployment quality:
 - Logs record stable event names, method, path, status, duration, and exception
   type without exposing secrets or local configuration values.
 
+## RC Build And Runtime Packaging
+
+The v1.0 RC build keeps release metadata centralized in `app/core/version.py`.
+Build scripts read that source to generate PyInstaller Windows metadata, pass
+the version into Inno Setup, write release manifests, and validate checksums.
+Installer templates deliberately avoid hard-coded RC versions.
+
+Packaged resource lookup is centralized in `app/core/runtime_paths.py`.
+Dashboard templates and static assets resolve through that helper so source
+runs and PyInstaller bundle runs use the same dashboard router and app factory
+without scattering direct `_MEIPASS` checks across routes.
+
 ## Production Operations Foundation
 
 Version 1.0 production readiness keeps the architecture layered:

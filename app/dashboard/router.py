@@ -2,6 +2,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
+from app.core.runtime_paths import resource_path
 from app.dashboard.services.dashboard_service import (
     get_dashboard_crm_summary,
     get_dashboard_customer_activity,
@@ -49,7 +50,7 @@ from app.dashboard.services.admin_service import (
     list_dashboard_system_users,
 )
 
-templates = Jinja2Templates(directory="app/dashboard/templates")
+templates = Jinja2Templates(directory=str(resource_path("app", "dashboard", "templates")))
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 

@@ -8,11 +8,16 @@ $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $Root
 
+$Version = (& $Python "scripts\validate_release.py" version).Trim()
+$VersionFile = Join-Path $Root "build\version_info.txt"
+& $Python "scripts\validate_release.py" pyinstaller-version-file $VersionFile | Out-Null
 & $Python -m PyInstaller --version | Out-Null
 
 $Common = @(
     "--noconfirm", "--clean", "--onedir",
-    "--version-file", "installer\version_info.txt"
+    "--version-file", $VersionFile,
+    "--add-data", "app\dashboard\templates;app\dashboard\templates",
+    "--add-data", "app\dashboard\static;app\dashboard\static"
 )
 $Icon = "installer\assets\carthage-pos.ico"
 if (Test-Path $Icon) {
@@ -26,5 +31,5 @@ if (-not $SkipInstaller) {
     if (-not (Test-Path $InnoSetupCompiler)) {
         throw "Inno Setup 6 compiler was not found: $InnoSetupCompiler"
     }
-    & $InnoSetupCompiler "installer\carthage-pos.iss"
+    & $InnoSetupCompiler "/DMyAppVersion=""$Version""" "installer\carthage-pos.iss"
 }

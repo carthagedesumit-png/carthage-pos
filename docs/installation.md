@@ -18,14 +18,19 @@ certificate.
 
 ```powershell
 python -m pip install -r requirements.txt -r requirements-build.txt
-.\installer\build.ps1
+.\scripts\build_rc.ps1
 ```
 
-`build.ps1` creates `CarthagePOS.exe` and `CarthagePOSDeployment.exe` with
-PyInstaller, then compiles `installer/carthage-pos.iss`. Add
-`installer/assets/carthage-pos.ico` before release to apply branded icons.
-Version constants, `version_info.txt`, and the Inno Setup version must be updated
-together during a release.
+`scripts/build_rc.ps1` runs the test suite, runs `git diff --check`, generates
+PyInstaller version metadata from `app.core.version`, packages
+`CarthagePOS.exe` and `CarthagePOSDeployment.exe`, passes the authoritative
+version into Inno Setup, and writes manifest/checksum/evidence files under
+`release\CBOS-<version>`. Add `installer/assets/carthage-pos.ico` before
+release to apply branded icons.
+
+The legacy `installer/build.ps1` also derives generated version metadata from
+`app.core.version`, but RC releases should use `scripts/build_rc.ps1` so artifact
+validation and evidence generation are included. See `docs/rc-build.md`.
 
 ## Fresh Installation
 
@@ -101,8 +106,8 @@ verifies size and SHA-256, and writes `updates/update-state.json`. It never runs
 the package. Rollback metadata retains the current version and requires a
 database backup before a future update executor swaps binaries.
 
-Channels are `stable`, `beta`, and `development`. A stable installation never
-accepts beta/development manifests.
+Channels are `stable`, `beta`, `pilot`, `rc`, and `development`. A stable
+installation never accepts beta, pilot, rc, or development manifests.
 
 ## Configuration Additions
 

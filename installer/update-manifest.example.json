@@ -6,7 +6,7 @@
   "package_size": 1,
   "minimum_database_version": 1,
   "maximum_database_version": 1,
-  "minimum_installer_version": "1.0.0",
+  "minimum_installer_version": "0.9.0",
   "published_at": "2026-07-03T00:00:00Z",
   "release_notes": "Replace checksum and size during the release build."
 }

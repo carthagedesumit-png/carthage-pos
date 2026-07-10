@@ -18,7 +18,7 @@ from app.backup.storage import (
 from app.core.config import get_config
 from app.core.exceptions import BackupError
 from app.core.logging_utils import get_logger, log_event, log_failure
-from app.core.version import APP_VERSION, DATABASE_SCHEMA_VERSION
+from app.core.version import APP_VERSION, DATABASE_SCHEMA_VERSION, parse_version
 from app.database.db_manager import get_connection, get_database_path
 
 
@@ -204,7 +204,7 @@ def _verify_metadata(metadata: dict) -> dict:
             finally:
                 connection.close()
         backup_major = int(str(metadata.get("application_version", "0")).split(".")[0])
-        current_major = int(APP_VERSION.split(".")[0])
+        current_major = parse_version(APP_VERSION)[0]
         checks["application_compatible"] = backup_major <= current_major
     except (OSError, sqlite3.DatabaseError, zipfile.BadZipFile, ValueError, KeyError,
             BackupError) as exc:

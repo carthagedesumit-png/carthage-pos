@@ -168,7 +168,7 @@ class DeploymentPlatformTestCase(unittest.TestCase):
             "package_size": package.stat().st_size,
             "minimum_database_version": 1,
             "maximum_database_version": 1,
-            "minimum_installer_version": "1.0.0",
+            "minimum_installer_version": "0.9.0",
         })
         self.assertTrue(check_for_update(manifest)["update_available"])
         staged = stage_update(manifest, LocalFileDownloadAdapter(str(source)), str(self.install_dir))

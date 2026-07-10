@@ -17,6 +17,22 @@ The manifest includes:
 
 The manifest is suitable for deployment verification and future update checks.
 
+## RC Build
+
+Build v1.0 release candidates with:
+
+```powershell
+.\scripts\build_rc.ps1
+```
+
+The command derives `1.0.0-rc.1` from `app.core.version`, generates
+PyInstaller version metadata, validates whitespace, runs the unit suite,
+packages required dashboard assets, writes checksums, creates
+`release-manifest.json`, and emits a release evidence bundle. The Inno Setup
+installer is only considered complete when the compiler runs successfully.
+
+Detailed build and validation instructions are in `docs/rc-build.md`.
+
 ## Release Checklist
 
 Each release must carry an auditable checklist with explicit status values:
@@ -56,3 +72,6 @@ Before pilot deployment:
 7. Backup create, verify, dry-run restore, and rollback checks pass.
 8. Known issues and pilot limitations are published.
 9. Customer pilot owner signs the go-live checklist.
+
+Windows clean-install, business smoke, upgrade, and rollback acceptance are
+documented in `docs/windows-acceptance.md`.

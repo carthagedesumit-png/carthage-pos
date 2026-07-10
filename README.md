@@ -28,6 +28,12 @@ derived from `app.core.version` so health, startup logs, installer metadata,
 dashboard administration, deployment verification, and release artifacts stay
 consistent.
 
+## Version 1.0 RC Build And Windows Acceptance
+
+The current release candidate is `1.0.0-rc.1`. The RC build flow produces
+versioned Windows artifacts, manifest/checksum validation, packaged dashboard
+asset checks, and a release evidence bundle for pilot acceptance.
+
 ## Features
 
 - Terminal-based cashier login and checkout flow
@@ -112,16 +118,21 @@ checklist are documented in [`docs/operations.md`](docs/operations.md).
 Release governance, versioning, upgrade rehearsal, and pilot deployment are
 documented in [`docs/release-process.md`](docs/release-process.md),
 [`docs/versioning.md`](docs/versioning.md), [`docs/upgrade-guide.md`](docs/upgrade-guide.md),
-and [`docs/pilot-deployment.md`](docs/pilot-deployment.md).
+[`docs/pilot-deployment.md`](docs/pilot-deployment.md),
+[`docs/rc-build.md`](docs/rc-build.md), and
+[`docs/windows-acceptance.md`](docs/windows-acceptance.md).
 
 ## Build the Windows installer
 
-Install `requirements-build.txt` and Inno Setup 6, then run:
+Install `requirements-build.txt` and Inno Setup 6, then run the reproducible RC
+build command:
 
 ```powershell
 python -m pip install -r requirements-build.txt
-.\installer\build.ps1
+.\scripts\build_rc.ps1
 ```
 
-The build produces packaged application/deployment executables and an Inno
-Setup installer. Release signing is performed outside this repository.
+The build produces packaged application/deployment executables, optional Inno
+Setup installer output, `release-manifest.json`, SHA-256 checksums, and release
+evidence under `release\CBOS-<version>`. Release signing is performed outside
+this repository.

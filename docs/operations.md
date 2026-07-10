@@ -14,7 +14,8 @@ For external beta or production services:
 Release manifests, release checklist status, upgrade rehearsal, and pilot
 acceptance are documented in `docs/release-process.md`,
 `docs/versioning.md`, `docs/upgrade-guide.md`, and
-`docs/pilot-deployment.md`.
+`docs/pilot-deployment.md`. RC build evidence and Windows acceptance are
+documented in `docs/rc-build.md` and `docs/windows-acceptance.md`.
 
 ## Health Endpoints
 
@@ -83,3 +84,6 @@ compatibility.
 - Dashboard renders with security headers.
 - API login, logout, idle timeout, and rate limiting behave as expected.
 - Installer repair succeeds on a staging machine.
+- RC release evidence includes manifest, checksum, artifact inventory, build
+  validation, clean-install, upgrade, rollback, known-issues, and signoff
+  records.

@@ -87,10 +87,11 @@ class ReleaseGovernanceTestCase(unittest.TestCase):
         self.assertEqual(self.db_path.read_bytes(), before)
 
     def test_release_checklist_validation_is_auditable(self):
+        from app.core.version import APP_VERSION
         from app.deployment.release_checklist import REQUIRED_RELEASE_CHECKS, validate_release_checklist
 
         checklist = {
-            "release": "1.0.0",
+            "release": APP_VERSION,
             "checks": {name: {"status": "passed", "evidence": "test"} for name in REQUIRED_RELEASE_CHECKS},
         }
         self.assertTrue(validate_release_checklist(checklist)["release_ready"])

@@ -25,6 +25,7 @@ from app.core.config import get_config
 from app.core.configuration_validation import validate_startup_configuration
 from app.core.health_service import live_status, readiness_status
 from app.core.logging_utils import get_logger, log_event
+from app.core.runtime_paths import resource_path
 from app.core.version import APP_VERSION
 from app.database.db_manager import initialize_database
 from app.dashboard.router import router as dashboard_router
@@ -77,7 +78,7 @@ def create_app(*, initialize: bool = True) -> FastAPI:
     application.middleware("http")(request_id_middleware)
     application.mount(
         "/dashboard/static",
-        StaticFiles(directory="app/dashboard/static"),
+        StaticFiles(directory=str(resource_path("app", "dashboard", "static"))),
         name="dashboard_static",
     )
     application.include_router(dashboard_router)

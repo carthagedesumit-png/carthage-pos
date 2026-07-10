@@ -19,7 +19,7 @@ from app.core.version import (
 from app.deployment.audit import record_deployment_event
 
 
-VALID_CHANNELS = {"stable", "beta", "development"}
+VALID_CHANNELS = {"stable", "beta", "pilot", "rc", "development"}
 
 
 @dataclass(frozen=True)
@@ -31,7 +31,7 @@ class UpdateManifest:
     package_size: int
     minimum_database_version: int = 0
     maximum_database_version: int = DATABASE_SCHEMA_VERSION
-    minimum_installer_version: str = "1.0.0"
+    minimum_installer_version: str = INSTALLER_VERSION
     published_at: str | None = None
     release_notes: str = ""
 
@@ -44,7 +44,7 @@ class UpdateManifest:
                 sha256=str(data["sha256"]).lower(), package_size=int(data["package_size"]),
                 minimum_database_version=int(data.get("minimum_database_version", 0)),
                 maximum_database_version=int(data.get("maximum_database_version", DATABASE_SCHEMA_VERSION)),
-                minimum_installer_version=str(data.get("minimum_installer_version", "1.0.0")),
+                minimum_installer_version=str(data.get("minimum_installer_version", INSTALLER_VERSION)),
                 published_at=data.get("published_at"),
                 release_notes=str(data.get("release_notes", "")),
             )

@@ -18,7 +18,7 @@ from app.core.version import (
 )
 
 
-DEFAULT_RELEASE_CHANNEL = "stable"
+DEFAULT_RELEASE_CHANNEL = "rc"
 
 
 def build_release_manifest(
@@ -88,8 +88,8 @@ def default_manifest_path() -> Path:
 
 def _release_channel(value: str | None) -> str:
     channel = (value or os.environ.get("CBOS_RELEASE_CHANNEL") or DEFAULT_RELEASE_CHANNEL).strip().lower()
-    if channel not in {"stable", "beta", "pilot", "development"}:
-        raise ValueError("Release channel must be stable, beta, pilot, or development.")
+    if channel not in {"stable", "beta", "pilot", "rc", "development"}:
+        raise ValueError("Release channel must be stable, beta, pilot, rc, or development.")
     return channel
 
 
