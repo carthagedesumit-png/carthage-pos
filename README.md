@@ -19,6 +19,15 @@ validation, failed-login rate limiting, API session idle timeout, startup
 configuration diagnostics, liveness/readiness endpoints, and documented backup
 and restore procedures.
 
+## Version 1.0 Release Governance
+
+CBOS v1.0 pilot release governance adds a machine-readable release manifest,
+documented semantic versioning policy, upgrade rehearsal workflow, release
+checklist validation, and pilot deployment templates. Release metadata is
+derived from `app.core.version` so health, startup logs, installer metadata,
+dashboard administration, deployment verification, and release artifacts stay
+consistent.
+
 ## Features
 
 - Terminal-based cashier login and checkout flow
@@ -100,6 +109,10 @@ deployment are documented in [`docs/licensing.md`](docs/licensing.md).
 Production security controls are documented in [`docs/security.md`](docs/security.md).
 Deployment, health checks, backup, restore, troubleshooting, and the operator
 checklist are documented in [`docs/operations.md`](docs/operations.md).
+Release governance, versioning, upgrade rehearsal, and pilot deployment are
+documented in [`docs/release-process.md`](docs/release-process.md),
+[`docs/versioning.md`](docs/versioning.md), [`docs/upgrade-guide.md`](docs/upgrade-guide.md),
+and [`docs/pilot-deployment.md`](docs/pilot-deployment.md).
 
 ## Build the Windows installer
 

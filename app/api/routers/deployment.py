@@ -10,6 +10,7 @@ from app.core.version import (
     APP_VERSION, DATABASE_SCHEMA_VERSION, INSTALLER_VERSION,
     VersionInfo, compatibility_report,
 )
+from app.deployment.release_manifest import build_release_manifest
 from app.deployment.update_service import get_update_status
 from app.deployment.verification_service import (
     get_current_deployment_status, get_installer_information, verify_installation,
@@ -22,6 +23,11 @@ router = APIRouter(tags=["deployment"])
 @router.get("/version")
 def version(_session: UserSession = Depends(get_current_session)):
     return data_response(VersionInfo().to_dict())
+
+
+@router.get("/release/manifest")
+def release_manifest(_session: UserSession = Depends(get_current_session)):
+    return data_response(build_release_manifest())
 
 
 @router.get("/deployment/status")

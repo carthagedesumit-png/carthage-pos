@@ -92,3 +92,11 @@ For edition upgrades, issue a newly signed response and import it as a
 replacement. The application validates the new document before archiving the
 old one, providing rollback-safe local replacement without rewriting business
 records.
+
+## Provider Interface
+
+`app/licensing/providers.py` defines a replaceable license status provider
+interface and a local development/test provider. Future commercial providers
+should implement the same sanitized status contract and feed status into the
+existing licensing service layer. Authentication and authorization remain
+separate from licensing.

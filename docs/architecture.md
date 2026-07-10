@@ -97,6 +97,22 @@ Version 1.0 production readiness keeps the architecture layered:
 Routes continue to adapt HTTP to services only; production controls are shared
 middleware or service helpers.
 
+## Release Governance
+
+Release governance keeps ownership aligned with existing subsystems:
+
+- `app/core/version.py` is the single source for application, API, installer,
+  migration, and database schema versions.
+- `app/deployment/release_manifest.py` creates machine-readable release
+  manifests for deployment verification and future update checks.
+- `app/deployment/upgrade_rehearsal.py` rehearses migrations against copied
+  databases and proves failed upgrades leave source data unchanged.
+- `app/deployment/release_checklist.py` validates auditable release checklist
+  status without replacing human sign-off.
+- `app/licensing/providers.py` defines a replaceable technical license status
+  provider interface while the existing offline licensing subsystem remains the
+  owner of signed license validation.
+
 ## Service Interactions
 
 Every public write service follows the same sequence:

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.core.config import get_config, parse_environment_file
 from app.core.version import VersionInfo, compatibility_report
+from app.deployment.release_manifest import build_release_manifest
 from app.deployment.installer_service import get_deployment_state
 from app.hardware.profiles import get_printer_profile
 
@@ -101,6 +102,7 @@ def get_installer_information() -> dict:
     return {
         "name": "Carthage POS Windows Installer",
         "versions": VersionInfo().to_dict(),
+        "release_manifest": build_release_manifest(),
         "supported_operations": ["FRESH", "UPGRADE", "REPAIR", "UNINSTALL"],
         "deployment_targets": ["desktop", "standalone", "network-foundation"],
         "windows_integration": [

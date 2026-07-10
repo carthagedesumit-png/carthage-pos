@@ -54,6 +54,11 @@ Run the newer installer over the existing installation. The deployment manager:
 5. Restores the previous database automatically if upgrade validation fails.
 6. Retains the rollback snapshot under the installation `rollback` directory.
 
+Before a customer pilot upgrade, run the upgrade rehearsal workflow documented
+in `docs/upgrade-guide.md`. The rehearsal uses a copied database, creates a
+pre-upgrade backup, validates schema compatibility, and confirms simulated
+failures do not corrupt the original database.
+
 Application binaries are replaced by Inno Setup. Business databases and backups
 are never overwritten by the file-copy phase.
 

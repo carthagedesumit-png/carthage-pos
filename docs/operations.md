@@ -11,6 +11,11 @@ For external beta or production services:
 4. Run database migrations with application startup or installer repair.
 5. Confirm `/health/live` and `/health/ready` before exposing traffic.
 
+Release manifests, release checklist status, upgrade rehearsal, and pilot
+acceptance are documented in `docs/release-process.md`,
+`docs/versioning.md`, `docs/upgrade-guide.md`, and
+`docs/pilot-deployment.md`.
+
 ## Health Endpoints
 
 - `GET /health`: backward-compatible basic health response.
