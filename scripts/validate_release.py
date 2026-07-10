@@ -106,7 +106,12 @@ def source_asset_checks(root: str | Path = REPO_ROOT) -> list[dict]:
 
 def packaged_asset_checks(release_dir: str | Path) -> list[dict]:
     root = Path(release_dir)
-    candidates = [root, root / "_internal"]
+    candidates = [
+        root,
+        root / "_internal",
+        root / "CarthagePOS",
+        root / "CarthagePOS" / "_internal",
+    ]
     checks = []
     for relative in REQUIRED_SOURCE_ASSETS:
         matches = [candidate / relative for candidate in candidates if (candidate / relative).exists()]
