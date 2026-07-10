@@ -59,6 +59,31 @@ class ApiSettings:
 
 
 @dataclass(frozen=True)
+class SecuritySettings:
+    content_type_options: str = "nosniff"
+    frame_options: str = "DENY"
+    referrer_policy: str = "same-origin"
+    content_security_policy: str = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "font-src 'self'; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+    secure_cookies: bool = True
+    cookie_same_site: str = "strict"
+    session_idle_minutes: int = 60
+    csrf_enabled: bool = False
+    rate_limit_enabled: bool = True
+    auth_rate_limit_attempts: int = 10
+    auth_rate_limit_window_seconds: int = 60
+
+
+@dataclass(frozen=True)
 class HardwareSettings:
     printer_enabled: bool = False
     printer_profile: str = "80mm"
@@ -143,6 +168,7 @@ class AppConfig:
     reports: ReportSettings = field(default_factory=ReportSettings)
     loyalty: LoyaltySettings = field(default_factory=LoyaltySettings)
     api: ApiSettings = field(default_factory=ApiSettings)
+    security: SecuritySettings = field(default_factory=SecuritySettings)
     hardware: HardwareSettings = field(default_factory=HardwareSettings)
     barcodes: BarcodeSettings = field(default_factory=BarcodeSettings)
     backup: BackupSettings = field(default_factory=BackupSettings)
@@ -292,6 +318,18 @@ def get_config() -> AppConfig:
     api_port = _int_setting("POS_API_PORT", 8000, positive=True)
     if api_port > 65535:
         raise ConfigurationError("POS_API_PORT must be between 1 and 65535.")
+    cookie_same_site = os.environ.get("POS_COOKIE_SAME_SITE", "strict").strip().lower()
+    if cookie_same_site not in {"strict", "lax", "none"}:
+        raise ConfigurationError("POS_COOKIE_SAME_SITE must be strict, lax, or none.")
+    frame_options = os.environ.get("POS_FRAME_OPTIONS", "DENY").strip().upper()
+    if frame_options not in {"DENY", "SAMEORIGIN"}:
+        raise ConfigurationError("POS_FRAME_OPTIONS must be DENY or SAMEORIGIN.")
+    referrer_policy = os.environ.get("POS_REFERRER_POLICY", "same-origin").strip().lower()
+    if referrer_policy not in {
+        "no-referrer", "no-referrer-when-downgrade", "origin", "origin-when-cross-origin",
+        "same-origin", "strict-origin", "strict-origin-when-cross-origin", "unsafe-url",
+    }:
+        raise ConfigurationError("POS_REFERRER_POLICY is invalid.")
     return AppConfig(
         tax_rate=_float_setting("POS_DEFAULT_TAX_RATE", 0.0),
         company=CompanySettings(
@@ -333,6 +371,23 @@ def get_config() -> AppConfig:
             session_hours=_int_setting("POS_API_SESSION_HOURS", 12, positive=True),
             host=os.environ.get("POS_API_HOST", "127.0.0.1").strip() or "127.0.0.1",
             port=api_port,
+        ),
+        security=SecuritySettings(
+            content_type_options=os.environ.get("POS_CONTENT_TYPE_OPTIONS", "nosniff").strip() or "nosniff",
+            frame_options=frame_options,
+            referrer_policy=referrer_policy,
+            content_security_policy=(
+                os.environ.get("POS_CONTENT_SECURITY_POLICY", SecuritySettings.content_security_policy)
+                .strip()
+                or SecuritySettings.content_security_policy
+            ),
+            secure_cookies=_bool_setting("POS_SECURE_COOKIES", True),
+            cookie_same_site=cookie_same_site,
+            session_idle_minutes=_int_setting("POS_SESSION_IDLE_MINUTES", 60, positive=True),
+            csrf_enabled=_bool_setting("POS_DASHBOARD_CSRF", False),
+            rate_limit_enabled=_bool_setting("POS_AUTH_RATE_LIMIT_ENABLED", True),
+            auth_rate_limit_attempts=_int_setting("POS_AUTH_RATE_LIMIT_ATTEMPTS", 10, positive=True),
+            auth_rate_limit_window_seconds=_int_setting("POS_AUTH_RATE_LIMIT_WINDOW_SECONDS", 60, positive=True),
         ),
         hardware=HardwareSettings(
             printer_enabled=_bool_setting("POS_PRINTER_ENABLED", False),

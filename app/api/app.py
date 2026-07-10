@@ -4,15 +4,26 @@ from contextlib import asynccontextmanager
 from time import perf_counter
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.errors import install_exception_handlers
 from app.api.licensing_middleware import enforce_api_license
 from app.api.schemas import ErrorResponse
+from app.api.security_middleware import (
+    auth_rate_limit_middleware,
+    csrf_middleware,
+    request_id_middleware,
+    reset_rate_limit_state,
+    security_headers_middleware,
+)
 from app.api.routers import (
     backups, barcodes, core, customers, deployment, documents, hardware,
     licensing, operations, reports,
 )
+from app.core.config import get_config
+from app.core.configuration_validation import validate_startup_configuration
+from app.core.health_service import live_status, readiness_status
 from app.core.logging_utils import get_logger, log_event
 from app.core.version import APP_VERSION
 from app.database.db_manager import initialize_database
@@ -26,9 +37,21 @@ logger = get_logger("api.requests")
 def create_app(*, initialize: bool = True) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        config = get_config()
+        reset_rate_limit_state()
+        validate_startup_configuration()
         if initialize:
             initialize_database()
+        log_event(
+            logger,
+            "api_startup_completed",
+            version=APP_VERSION,
+            host=config.api.host,
+            port=config.api.port,
+            environment="production" if config.licensing.enforcement_enabled else "development",
+        )
         yield
+        log_event(logger, "api_shutdown_completed", version=APP_VERSION)
 
     application = FastAPI(
         title="Carthage Business Operating System API",
@@ -48,6 +71,10 @@ def create_app(*, initialize: bool = True) -> FastAPI:
         },
     )
     install_exception_handlers(application)
+    application.middleware("http")(security_headers_middleware)
+    application.middleware("http")(csrf_middleware)
+    application.middleware("http")(auth_rate_limit_middleware)
+    application.middleware("http")(request_id_middleware)
     application.mount(
         "/dashboard/static",
         StaticFiles(directory="app/dashboard/static"),
@@ -78,12 +105,24 @@ def create_app(*, initialize: bool = True) -> FastAPI:
             path=request.url.path,
             status_code=response.status_code,
             duration_ms=round((perf_counter() - started) * 1000, 2),
+            request_id=getattr(request.state, "request_id", ""),
         )
         return response
 
     @application.get("/health", tags=["system"])
     def health():
         return {"status": "ok"}
+
+    @application.get("/health/live", tags=["system"])
+    def health_live():
+        return live_status()
+
+    @application.get("/health/ready", tags=["system"])
+    def health_ready():
+        payload = readiness_status()
+        if not payload["ready"]:
+            return JSONResponse(status_code=503, content=payload)
+        return payload
 
     return application
 

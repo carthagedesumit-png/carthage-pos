@@ -77,6 +77,26 @@ focuses on beta deployment quality:
 - Logs record stable event names, method, path, status, duration, and exception
   type without exposing secrets or local configuration values.
 
+## Production Operations Foundation
+
+Version 1.0 production readiness keeps the architecture layered:
+
+- `app/api/security_middleware.py` owns HTTP security headers, request IDs,
+  cookie hardening, optional dashboard CSRF checks, and failed-login rate
+  limiting.
+- `app/core/health_service.py` owns liveness/readiness composition for database
+  connectivity, schema compatibility, configuration diagnostics, and deployment
+  status.
+- `app/core/configuration_validation.py` owns startup path validation and
+  writable-directory diagnostics. Strict fail-fast validation is enabled for
+  production with `POS_STRICT_STARTUP_VALIDATION=true`.
+- `app/api/session_service.py` owns absolute and idle API session expiry.
+- `app/backup` remains the single owner of manual backups, restore validation,
+  integrity verification, timestamped artifacts, and retention.
+
+Routes continue to adapt HTTP to services only; production controls are shared
+middleware or service helpers.
+
 ## Service Interactions
 
 Every public write service follows the same sequence:

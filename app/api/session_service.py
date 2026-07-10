@@ -50,7 +50,7 @@ def resolve_session(token: str) -> UserSession:
         raise AuthenticationError("Bearer token is required.")
     with get_connection() as conn:
         row = conn.execute(
-            """SELECT aps.user_id, aps.store_id, aps.expires_at, aps.revoked_at,
+            """SELECT aps.user_id, aps.store_id, aps.expires_at, aps.last_used_at, aps.revoked_at,
                       u.username, u.full_name, u.role
                FROM api_sessions aps
                JOIN users u ON u.id = aps.user_id
@@ -60,7 +60,15 @@ def resolve_session(token: str) -> UserSession:
     if not row or row["revoked_at"]:
         raise AuthenticationError("API session is invalid or revoked.")
     if datetime.fromisoformat(row["expires_at"]) <= datetime.now(UTC):
+        log_event(logger, "api_session_expired", user_id=row["user_id"])
         raise AuthenticationError("API session has expired.")
+    idle_minutes = get_config().security.session_idle_minutes
+    last_used_at = datetime.fromisoformat(row["last_used_at"])
+    if last_used_at.tzinfo is None:
+        last_used_at = last_used_at.replace(tzinfo=UTC)
+    if last_used_at + timedelta(minutes=idle_minutes) <= datetime.now(UTC):
+        log_event(logger, "api_session_idle_timeout", user_id=row["user_id"])
+        raise AuthenticationError("API session has expired from inactivity.")
     candidate = UserSession(
         user_id=row["user_id"], username=row["username"],
         full_name=row["full_name"], role=row["role"], store_id=row["store_id"],

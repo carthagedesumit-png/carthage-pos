@@ -11,6 +11,14 @@ consistency, framework compatibility, friendly error handling, masked
 configuration exposure, and regression-free quality checks rather than new
 business modules.
 
+## Version 1.0 Production Foundation
+
+The production-readiness foundation adds operational controls without changing
+business workflows: security headers, request IDs, optional dashboard CSRF
+validation, failed-login rate limiting, API session idle timeout, startup
+configuration diagnostics, liveness/readiness endpoints, and documented backup
+and restore procedures.
+
 ## Features
 
 - Terminal-based cashier login and checkout flow
@@ -66,6 +74,12 @@ Open `http://127.0.0.1:8000/docs` for the interactive API reference. See
 [`docs/api.md`](docs/api.md) for authentication, endpoint groups, examples, and
 the error contract.
 
+Operational endpoints:
+
+- `GET /health`
+- `GET /health/live`
+- `GET /health/ready`
+
 The browser dashboard is available under `/dashboard` when the API app is
 running. Dashboard, Sales, Inventory, CRM, Procurement, Reports, and
 Administration workspaces provide read-only management filters, pagination,
@@ -83,6 +97,9 @@ Windows installation, upgrade, repair, uninstall, and release-build instructions
 are documented in [`docs/installation.md`](docs/installation.md).
 Commercial licensing, offline activation, edition capabilities, and secure key
 deployment are documented in [`docs/licensing.md`](docs/licensing.md).
+Production security controls are documented in [`docs/security.md`](docs/security.md).
+Deployment, health checks, backup, restore, troubleshooting, and the operator
+checklist are documented in [`docs/operations.md`](docs/operations.md).
 
 ## Build the Windows installer
 
