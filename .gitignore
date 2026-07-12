@@ -235,3 +235,4 @@ config/windows-integration.json
 .vs/
 .idea/
 .vscode/
+release/
