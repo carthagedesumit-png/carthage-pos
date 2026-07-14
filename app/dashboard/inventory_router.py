@@ -6,7 +6,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.api.session_service import issue_session, revoke_session
+from app.api.session_service import issue_session, revoke_session, resolve_session
+from app.administration.user_service import change_own_password
+from app.database.db_manager import get_connection
 from app.core.exceptions import ApplicationError, AuthenticationError, AuthorizationError
 from app.core.runtime_paths import resource_path
 from app.dashboard.auth import (
@@ -75,7 +77,9 @@ async def login(request: Request):
                                int(values["store_id"]) if values.get("store_id") else None)
     except (ApplicationError, ValueError) as exc:
         return _redirect("/dashboard/login", error=str(exc))
-    response = _redirect("/dashboard/inventory", message="Signed in successfully.")
+    with get_connection() as conn:
+        force_change = bool(conn.execute("SELECT force_password_change FROM users WHERE id=?", (result["session"]["user_id"],)).fetchone()[0])
+    response = _redirect("/dashboard/change-password" if force_change else "/dashboard/inventory", message="Signed in successfully.")
     response.set_cookie(SESSION_COOKIE, result["access_token"], httponly=True,
                         samesite="strict", secure=False, max_age=8 * 60 * 60)
     return response
@@ -92,6 +96,23 @@ def logout(request: Request):
     response = _redirect("/dashboard/login", message="Signed out.")
     response.delete_cookie(SESSION_COOKIE)
     return response
+
+@router.get("/change-password", response_class=HTMLResponse)
+def change_password_page(request: Request):
+    token=request.cookies.get(SESSION_COOKIE)
+    try: session=resolve_session(token) if token else None
+    except AuthenticationError: session=None
+    if not session:return _redirect("/dashboard/login",error="Please sign in.")
+    return _render(request,"dashboard_change_password.html",{"title":"Change Password","errors":{}})
+
+@router.post("/change-password")
+async def change_password_route(request: Request):
+    values=await _form(request); token=request.cookies.get(SESSION_COOKIE,"")
+    try:
+        session=resolve_session(token); change_own_password(session,values.get("current_password"),values.get("new_password"),token)
+    except (ApplicationError,ValueError) as exc:
+        return _render(request,"dashboard_change_password.html",{"title":"Change Password","errors":{"form":str(exc)}},422)
+    return _redirect("/dashboard/inventory",message="Password changed successfully.")
 
 
 @router.get("/inventory/products/new", response_class=HTMLResponse)

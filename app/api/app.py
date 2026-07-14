@@ -30,6 +30,7 @@ from app.core.version import APP_VERSION
 from app.database.db_manager import initialize_database
 from app.dashboard.router import router as dashboard_router
 from app.dashboard.inventory_router import router as inventory_dashboard_router
+from app.dashboard.administration_router import router as administration_dashboard_router
 from app.dashboard.api.dashboard_api import router as dashboard_api_router
 
 
@@ -83,6 +84,7 @@ def create_app(*, initialize: bool = True) -> FastAPI:
         name="dashboard_static",
     )
     application.include_router(inventory_dashboard_router)
+    application.include_router(administration_dashboard_router)
     application.include_router(dashboard_router)
     application.include_router(dashboard_api_router)
     application.include_router(core.router, prefix="/api/v1")

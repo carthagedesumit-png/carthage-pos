@@ -1,6 +1,5 @@
 """Persisted, revocable bearer sessions for the HTTP API."""
 
-import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Optional
@@ -17,6 +16,10 @@ from app.core.config import get_config
 from app.core.logging_utils import get_logger, log_event
 from app.database.db_manager import get_connection
 from app.database.transactions import transaction
+from app.core.token_utils import token_hash
+
+# Backward-compatible alias retained for readiness tooling and existing integrations.
+_token_hash = token_hash
 
 
 logger = get_logger("api.authentication")
@@ -27,13 +30,14 @@ def issue_session(username: str, password: str, store_id: Optional[int] = None) 
     if session is None:
         raise AuthenticationError("Invalid username or password.")
     token = secrets.token_urlsafe(32)
+    session_reference = secrets.token_hex(16)
     expires_at = datetime.now(UTC) + timedelta(hours=get_config().api.session_hours)
     with transaction() as conn:
         conn.execute(
             """INSERT INTO api_sessions (
-                   token_hash, user_id, store_id, expires_at
-               ) VALUES (?, ?, ?, ?)""",
-            (_token_hash(token), session.user_id, session.store_id,
+                   token_hash, session_reference, user_id, store_id, expires_at
+               ) VALUES (?, ?, ?, ?, ?)""",
+            (token_hash(token), session_reference, session.user_id, session.store_id,
              expires_at.isoformat(timespec="seconds")),
         )
     log_event(logger, "api_session_created", user_id=session.user_id, store_id=session.store_id)
@@ -55,7 +59,7 @@ def resolve_session(token: str) -> UserSession:
                FROM api_sessions aps
                JOIN users u ON u.id = aps.user_id
                WHERE aps.token_hash = ?""",
-            (_token_hash(token),),
+            (token_hash(token),),
         ).fetchone()
     if not row or row["revoked_at"]:
         raise AuthenticationError("API session is invalid or revoked.")
@@ -80,7 +84,7 @@ def resolve_session(token: str) -> UserSession:
     with get_connection() as conn:
         conn.execute(
             "UPDATE api_sessions SET last_used_at = CURRENT_TIMESTAMP WHERE token_hash = ?",
-            (_token_hash(token),),
+            (token_hash(token),),
         )
     return session
 
@@ -90,7 +94,7 @@ def revoke_session(token: str) -> None:
         cursor = conn.execute(
             """UPDATE api_sessions SET revoked_at = CURRENT_TIMESTAMP
                WHERE token_hash = ? AND revoked_at IS NULL""",
-            (_token_hash(token),),
+            (token_hash(token),),
         )
         if cursor.rowcount == 0:
             raise AuthenticationError("API session is invalid or already revoked.")
@@ -103,7 +107,7 @@ def change_session_store(token: str, store_id: int) -> UserSession:
     with transaction() as conn:
         conn.execute(
             "UPDATE api_sessions SET store_id = ?, last_used_at = CURRENT_TIMESTAMP WHERE token_hash = ?",
-            (scoped.store_id, _token_hash(token)),
+            (scoped.store_id, token_hash(token)),
         )
     log_event(logger, "api_session_store_changed", user_id=scoped.user_id, store_id=scoped.store_id)
     return scoped
@@ -117,7 +121,3 @@ def session_to_dict(session: UserSession) -> dict:
         "role": session.role,
         "store_id": session.store_id,
     }
-
-
-def _token_hash(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()

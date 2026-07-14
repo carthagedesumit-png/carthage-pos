@@ -65,6 +65,7 @@ def initialize_database():
         ensure_system_user(cursor)
         migrate_stores_and_assignments(cursor)
         migrate_api_sessions(cursor)
+        migrate_administration_tables(cursor)
         migrate_hardware_events(cursor)
         migrate_categories_table(cursor)
         migrate_suppliers_table(cursor)
@@ -102,6 +103,64 @@ def migrate_api_sessions(cursor):
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_api_sessions_user ON api_sessions (user_id, expires_at)"
     )
+    columns = get_table_columns(cursor, "api_sessions")
+    if "session_reference" not in columns:
+        cursor.execute("ALTER TABLE api_sessions ADD COLUMN session_reference TEXT")
+        cursor.execute(
+            "UPDATE api_sessions SET session_reference = lower(hex(randomblob(16))) "
+            "WHERE session_reference IS NULL"
+        )
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_api_sessions_reference "
+        "ON api_sessions (session_reference)"
+    )
+
+
+def migrate_administration_tables(cursor):
+    """Add non-sensitive account security, password history, and user audit storage."""
+    columns = get_table_columns(cursor, "users")
+    additions = {
+        "email": "TEXT COLLATE NOCASE",
+        "failed_login_count": "INTEGER NOT NULL DEFAULT 0",
+        "is_locked": "INTEGER NOT NULL DEFAULT 0",
+        "force_password_change": "INTEGER NOT NULL DEFAULT 0",
+        "updated_at": "DATETIME",
+    }
+    for name, definition in additions.items():
+        if name not in columns:
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {name} {definition}")
+    cursor.execute("UPDATE users SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)")
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique "
+        "ON users (email COLLATE NOCASE) WHERE email IS NOT NULL AND email != ''"
+    )
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_password_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            password_hash TEXT NOT NULL,
+            changed_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (changed_by) REFERENCES users (id)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            acting_user_id INTEGER,
+            event_type TEXT NOT NULL,
+            details TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (acting_user_id) REFERENCES users (id)
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_audit_subject "
+        "ON user_audit_events (user_id, created_at)"
+    )
 
 
 def migrate_hardware_events(cursor):
@@ -133,9 +192,14 @@ def migrate_users_table(cursor):
 
     columns = get_table_columns(cursor, "users")
     required_columns = {"id", "username", "password_hash", "full_name", "role", "is_active", "created_at", "last_login"}
-    if required_columns.issubset(columns):
+    table_sql = cursor.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'"
+    ).fetchone()[0]
+    supports_extended_roles = "auditor" in (table_sql or "")
+    if required_columns.issubset(columns) and supports_extended_roles:
         return
-
+    cursor.execute("PRAGMA foreign_keys = OFF")
+    cursor.execute("PRAGMA legacy_alter_table = ON")
     cursor.execute("ALTER TABLE users RENAME TO users_legacy")
     create_users_table(cursor)
 
@@ -146,14 +210,18 @@ def migrate_users_table(cursor):
     select_created_at = "created_at" if "created_at" in legacy_columns else "CURRENT_TIMESTAMP"
     select_last_login = "last_login" if "last_login" in legacy_columns else "NULL"
 
+    select_home_store = "home_store_id" if "home_store_id" in legacy_columns else "NULL"
     cursor.execute(f"""
-        INSERT OR IGNORE INTO users (username, password_hash, full_name, role, is_active, created_at, last_login)
+        INSERT OR IGNORE INTO users (
+            username, password_hash, full_name, role, is_active, created_at, last_login, home_store_id
+        )
         SELECT username, password_hash, {select_full_name}, {select_role}, {select_is_active},
-               {select_created_at}, {select_last_login}
+               {select_created_at}, {select_last_login}, {select_home_store}
         FROM users_legacy
         WHERE username IS NOT NULL AND password_hash IS NOT NULL
     """)
     cursor.execute("DROP TABLE users_legacy")
+    cursor.execute("PRAGMA legacy_alter_table = OFF")
 
 
 def create_users_table(cursor):
@@ -163,10 +231,13 @@ def create_users_table(cursor):
             username TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
             full_name TEXT NOT NULL,
-            role TEXT NOT NULL CHECK (role IN ('admin', 'manager', 'cashier')),
+            role TEXT NOT NULL CHECK (
+                role IN ('admin', 'manager', 'cashier', 'auditor', 'inventory_officer')
+            ),
             is_active INTEGER NOT NULL DEFAULT 1,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            last_login DATETIME
+            last_login DATETIME,
+            home_store_id INTEGER
         );
     """)
 

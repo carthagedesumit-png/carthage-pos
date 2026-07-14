@@ -15,8 +15,10 @@ from app.database.transactions import transaction
 ROLE_ADMIN = "admin"
 ROLE_MANAGER = "manager"
 ROLE_CASHIER = "cashier"
-VALID_ROLES = {ROLE_ADMIN, ROLE_MANAGER, ROLE_CASHIER}
-INVENTORY_ROLES = {ROLE_ADMIN, ROLE_MANAGER}
+ROLE_AUDITOR = "auditor"
+ROLE_INVENTORY_OFFICER = "inventory_officer"
+VALID_ROLES = {ROLE_ADMIN, ROLE_MANAGER, ROLE_CASHIER, ROLE_AUDITOR, ROLE_INVENTORY_OFFICER}
+INVENTORY_ROLES = {ROLE_ADMIN, ROLE_MANAGER, ROLE_INVENTORY_OFFICER}
 USER_MANAGEMENT_ROLES = {ROLE_ADMIN}
 
 
@@ -183,13 +185,15 @@ def create_user(
     home_store_id=None,
 ):
     acting_session = require_user_management(acting_session)
-    return _insert_user(
+    user = _insert_user(
         username,
         password,
         full_name,
         role,
         home_store_id=home_store_id or acting_session.store_id,
     )
+    _record_user_audit(user["id"], acting_session.user_id, "USER_CREATED", {"role": role})
+    return user
 
 
 def _insert_user(username, password, full_name, role, home_store_id=None):
@@ -229,14 +233,25 @@ def authenticate_user(username, password, store_id=None):
     username = normalize_username(username)
     with get_connection() as conn:
         row = conn.execute(
-            """SELECT id, username, password_hash, full_name, role, is_active, home_store_id
+            """SELECT id, username, password_hash, full_name, role, is_active, home_store_id,
+                      COALESCE(is_locked, 0) AS is_locked
                FROM users WHERE username = ?""",
             (username,)
         ).fetchone()
-        if not row or not row["is_active"] or not verify_password(password, row["password_hash"]):
+        if not row or not row["is_active"] or row["is_locked"]:
             log_event(logger, "authentication_failed", username=username)
             return None
-        conn.execute("UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
+        if not verify_password(password, row["password_hash"]):
+            conn.execute(
+                "UPDATE users SET failed_login_count = failed_login_count + 1 WHERE id = ?",
+                (row["id"],),
+            )
+            log_event(logger, "authentication_failed", username=username)
+            return None
+        conn.execute(
+            "UPDATE users SET last_login = CURRENT_TIMESTAMP, failed_login_count = 0 WHERE id = ?",
+            (row["id"],),
+        )
         session = row_to_session(row, store_id=store_id)
         session = validate_session(session)
         log_event(logger, "authentication_succeeded", user_id=session.user_id, username=username)
@@ -250,10 +265,25 @@ def change_password(user_id, new_password, acting_session=None):
     if not get_user_by_id(user_id):
         raise ValidationError("User does not exist.")
     with transaction() as conn:
+        current = conn.execute("SELECT password_hash FROM users WHERE id = ?", (user_id,)).fetchone()
+        if current and _table_available(conn, "user_password_history"):
+            recent = conn.execute(
+                "SELECT password_hash FROM user_password_history WHERE user_id = ? ORDER BY id DESC LIMIT 5",
+                (user_id,),
+            ).fetchall()
+            if verify_password(new_password, current["password_hash"]) or any(
+                verify_password(new_password, item["password_hash"]) for item in recent
+            ):
+                raise ValidationError("The new password must not reuse a recent password.")
+            conn.execute(
+                "INSERT INTO user_password_history (user_id, password_hash, changed_by) VALUES (?, ?, ?)",
+                (user_id, current["password_hash"], acting_session.user_id),
+            )
         conn.execute(
-            "UPDATE users SET password_hash = ? WHERE id = ?",
+            "UPDATE users SET password_hash = ?, force_password_change = 0 WHERE id = ?",
             (hash_password(new_password), user_id)
         )
+        _record_user_audit_in_connection(conn, user_id, acting_session.user_id, "PASSWORD_CHANGED")
     log_event(logger, "password_changed", user_id=user_id, acting_user_id=acting_session.user_id)
 
 
@@ -265,6 +295,7 @@ def deactivate_user(user_id, acting_session=None):
         cursor = conn.execute("UPDATE users SET is_active = 0 WHERE id = ?", (user_id,))
         if cursor.rowcount == 0:
             raise ValidationError("User does not exist.")
+        _record_user_audit_in_connection(conn, user_id, acting_session.user_id, "USER_DEACTIVATED")
     log_event(logger, "user_deactivated", user_id=user_id, acting_user_id=acting_session.user_id)
 
 
@@ -274,6 +305,7 @@ def reactivate_user(user_id, acting_session=None):
         cursor = conn.execute("UPDATE users SET is_active = 1 WHERE id = ?", (user_id,))
         if cursor.rowcount == 0:
             raise ValidationError("User does not exist.")
+        _record_user_audit_in_connection(conn, user_id, acting_session.user_id, "USER_ACTIVATED")
     log_event(logger, "user_reactivated", user_id=user_id, acting_user_id=acting_session.user_id)
 
 
@@ -281,7 +313,8 @@ def get_user_by_id(user_id):
     with get_connection() as conn:
         row = conn.execute(
             """SELECT id, username, full_name, role, is_active, created_at, last_login,
-                      home_store_id
+                      home_store_id, email, failed_login_count, is_locked, force_password_change,
+                      updated_at
                FROM users WHERE id = ?""",
             (user_id,)
         ).fetchone()
@@ -362,8 +395,8 @@ def validate_session(session):
         raise AuthorizationError("The selected store is inactive or unavailable.")
     if row["role"] == ROLE_CASHIER and active_store_id != row["home_store_id"]:
         raise AuthorizationError("Cashiers may only operate in their assigned home store.")
-    if row["role"] == ROLE_MANAGER and not has_assignment:
-        raise AuthorizationError("Manager is not assigned to the selected store.")
+    if row["role"] in {ROLE_MANAGER, ROLE_AUDITOR, ROLE_INVENTORY_OFFICER} and not has_assignment:
+        raise AuthorizationError("User is not assigned to the selected store.")
     return row_to_session(row, store_id=active_store_id)
 
 
@@ -413,6 +446,22 @@ def normalize_username(username):
 def validate_role(role):
     if role not in VALID_ROLES:
         raise ValidationError(f"Role must be one of: {', '.join(sorted(VALID_ROLES))}.")
+
+def _table_available(conn, name):
+    return bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone())
+
+def _record_user_audit(user_id, acting_user_id, event_type, details=None):
+    import json
+    with transaction() as conn:
+        _record_user_audit_in_connection(conn, user_id, acting_user_id, event_type, details)
+
+def _record_user_audit_in_connection(conn, user_id, acting_user_id, event_type, details=None):
+    import json
+    if _table_available(conn, "user_audit_events"):
+        conn.execute(
+            "INSERT INTO user_audit_events (user_id, acting_user_id, event_type, details) VALUES (?, ?, ?, ?)",
+            (user_id, acting_user_id, event_type, json.dumps(details or {}, sort_keys=True)),
+        )
 
 
 if __name__ == "__main__":

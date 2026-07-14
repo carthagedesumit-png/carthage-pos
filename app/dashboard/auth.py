@@ -6,6 +6,7 @@ from fastapi import Request
 
 from app.api.session_service import resolve_session
 from app.core.exceptions import AuthenticationError, AuthorizationError
+from app.database.db_manager import get_connection
 
 
 SESSION_COOKIE = "cbos_dashboard_session"
@@ -22,7 +23,15 @@ def dashboard_session(request: Request, required=False):
             raise AuthenticationError("Please sign in to manage inventory.")
         return None
     try:
-        return resolve_session(token)
+        session = resolve_session(token)
+        if request.url.path not in {"/dashboard/change-password", "/dashboard/logout"}:
+            with get_connection() as conn:
+                row = conn.execute("SELECT force_password_change FROM users WHERE id=?", (session.user_id,)).fetchone()
+            if row and row["force_password_change"]:
+                if required:
+                    raise AuthorizationError("You must change your temporary password before continuing.")
+                return None
+        return session
     except (AuthenticationError, AuthorizationError):
         if required:
             raise
@@ -35,4 +44,3 @@ def csrf_token(request: Request):
 
 def can_manage_inventory(session):
     return bool(session and session.can_manage_inventory())
-

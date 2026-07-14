@@ -62,13 +62,18 @@ def _database_version():
 
 def _format_user(row):
     active = bool(row["is_active"])
+    locked = bool(row["is_locked"])
     return {
         "id": row["id"],
         "username": row["username"],
         "full_name": row["full_name"] or row["username"],
         "role": row["role"] or "",
         "is_active": active,
-        "active_status": "active" if active else "inactive",
+        "active_status": "locked" if locked else ("active" if active else "inactive"),
+        "is_locked": locked,
+        "email": row["email"] or "",
+        "failed_login_count": int(row["failed_login_count"] or 0),
+        "force_password_change": bool(row["force_password_change"]),
         "created_at": row["created_at"] or "",
         "last_login": row["last_login"] or "",
         "home_store_id": row["home_store_id"],
@@ -86,9 +91,9 @@ def list_dashboard_system_users(filters=None):
         "page": _safe_int(filters.get("page"), default=1, minimum=1),
         "page_size": _safe_int(filters.get("page_size"), default=25, minimum=1, maximum=100),
     }
-    if normalized["role"] not in {"", "admin", "manager", "cashier"}:
+    if normalized["role"] not in {"", "admin", "manager", "cashier", "auditor", "inventory_officer"}:
         normalized["role"] = ""
-    if normalized["active"] not in {"active", "inactive", "all"}:
+    if normalized["active"] not in {"active", "inactive", "locked", "all"}:
         normalized["active"] = "all"
     with get_connection() as conn:
         if not _table_exists(conn, "users"):
@@ -105,10 +110,12 @@ def list_dashboard_system_users(filters=None):
                 where.append("COALESCE(u.is_active, 1) = 1")
             elif normalized["active"] == "inactive":
                 where.append("COALESCE(u.is_active, 1) = 0")
+            elif normalized["active"] == "locked":
+                where.append("COALESCE(u.is_locked, 0) = 1")
             if normalized["search"]:
                 pattern = f"%{normalized['search']}%"
-                where.append("(u.username LIKE ? OR u.full_name LIKE ? OR u.role LIKE ?)")
-                params.extend([pattern, pattern, pattern])
+                where.append("(u.username LIKE ? OR u.full_name LIKE ? OR u.role LIKE ? OR u.email LIKE ?)")
+                params.extend([pattern, pattern, pattern, pattern])
             joins = []
             home_store_expr = "NULL AS home_store_id"
             home_store_name = "'' AS home_store_name"
@@ -134,8 +141,11 @@ def list_dashboard_system_users(filters=None):
             normalized["page"] = min(normalized["page"], total_pages)
             offset = (normalized["page"] - 1) * normalized["page_size"]
             rows = conn.execute(
-                f"""SELECT u.id, u.username, u.full_name, u.role,
+                f"""SELECT u.id, u.username, u.full_name, u.role, u.email,
                           COALESCE(u.is_active, 1) AS is_active,
+                          COALESCE(u.is_locked, 0) AS is_locked,
+                          COALESCE(u.failed_login_count, 0) AS failed_login_count,
+                          COALESCE(u.force_password_change, 0) AS force_password_change,
                           u.created_at, u.last_login, {home_store_expr} AS home_store_id,
                           {home_store_name}, {assigned_stores}
                    FROM users u
@@ -163,11 +173,16 @@ def list_dashboard_system_users(filters=None):
     }
 
 
-def get_dashboard_system_user_detail(user_id):
+def get_dashboard_system_user_detail(user_id, session=None):
     try:
         user_id = int(user_id)
     except (TypeError, ValueError):
         return None
+    if session is not None:
+        from app.administration.user_service import get_managed_user
+        managed = get_managed_user(session, user_id)
+        return {"user": managed, "activity": managed["audit"], "sessions": managed["sessions"],
+                "permissions": managed["permissions"], "actions": []}
     result = list_dashboard_system_users({"active": "all", "page_size": 100})
     user = next((item for item in result["items"] if item["id"] == user_id), None)
     if not user:

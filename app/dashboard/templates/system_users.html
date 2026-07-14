@@ -5,13 +5,15 @@
 <section class="hero">
     <div>
         <h1>User Management</h1>
-        <p>Read-only user roster, roles, store assignment, and account status.</p>
+        <p>User lifecycle, roles, store assignments, account security, and sessions.</p>
         <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
     </div>
     <div class="hero-status">
         <a class="hero-link" href="/dashboard/system">Back to Administration</a>
+        {% if can_create %}<a class="hero-link primary-action" href="/dashboard/system/users/new">Create User</a>{% endif %}
     </div>
 </section>
+{% if success %}<div class="alert success" role="status">{{ success }}</div>{% endif %}{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
 
 <section class="panel reports-workspace">
     <form class="filter-form" method="get" action="/dashboard/system/users">
@@ -60,6 +62,7 @@
                 <tr>
                     <th>Username</th>
                     <th>Name</th>
+                    <th>Email</th>
                     <th>Role</th>
                     <th>Status</th>
                     <th>Home Store</th>
@@ -74,6 +77,7 @@
                 <tr>
                     <td><strong>{{ user.username }}</strong></td>
                     <td>{{ user.full_name }}</td>
+                    <td>{{ user.email or "Not set" }}</td>
                     <td>{{ user.role }}</td>
                     <td><span class="badge badge-{{ user.active_status }}">{{ user.active_status.title() }}</span></td>
                     <td>{{ user.home_store or "No store" }}</td>

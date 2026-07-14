@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block content %}
+<section class="hero"><div><h1>{{ form_title }}</h1><p>Manage identity, role, and validated store access.</p></div><div class="hero-status"><a class="hero-link" href="/dashboard/system/users">Cancel</a></div></section>
+<section class="panel form-panel">{% if errors.form %}<div class="alert error" role="alert">{{ errors.form }}</div>{% endif %}
+<form class="management-form form-grid" method="post" action="{{ action }}?csrf_token={{ csrf_token }}">
+{% if not user %}<label><span>Username</span><input name="username" value="{{ values.username or '' }}" required autocomplete="off"></label>{% endif %}
+<label><span>Full name</span><input name="full_name" value="{{ values.full_name or '' }}" required></label>
+<label><span>Email</span><input type="email" name="email" value="{{ values.email or '' }}"></label>
+<label><span>Role</span><select name="role" required>{% for role in roles %}<option value="{{ role }}" {% if values.role == role %}selected{% endif %}>{{ role.replace('_',' ').title() }}</option>{% endfor %}</select></label>
+{% if not user %}<label><span>Temporary password</span><input type="password" name="password" required minlength="12" autocomplete="new-password"><small>12+ characters with upper/lower case, number, and symbol.</small></label><label class="confirmation-check"><input type="checkbox" name="force_password_change" value="true" checked><span>Force password change at next sign-in</span></label>{% endif %}
+<fieldset class="full-width"><legend>Assigned stores</legend><div class="store-checkboxes">{% for store in stores %}<label class="confirmation-check"><input type="checkbox" name="store_ids" value="{{ store.id }}" {% if values.stores and store.id in values.stores|map(attribute='id')|list %}checked{% endif %}><span>{{ store.name }}</span></label>{% endfor %}</div></fieldset>
+<label><span>Home store</span><select name="home_store_id"><option value="">Select a store</option>{% for store in stores %}<option value="{{ store.id }}" {% if values.home_store_id == store.id %}selected{% endif %}>{{ store.name }}</option>{% endfor %}</select></label>
+<div class="full-width alert"><strong>Effective permissions are role-derived.</strong> Store assignments cannot grant a higher role.</div>
+<div class="form-actions full-width"><button class="primary-action" type="submit">{{ 'Save Changes' if user else 'Create User' }}</button><a href="/dashboard/system/users">Cancel</a></div>
+</form></section>{% endblock %}
