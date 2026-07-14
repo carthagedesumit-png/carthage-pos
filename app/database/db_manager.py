@@ -66,6 +66,7 @@ def initialize_database():
         migrate_stores_and_assignments(cursor)
         migrate_api_sessions(cursor)
         migrate_administration_tables(cursor)
+        migrate_checkout_tables(cursor)
         migrate_hardware_events(cursor)
         migrate_categories_table(cursor)
         migrate_suppliers_table(cursor)
@@ -161,6 +162,26 @@ def migrate_administration_tables(cursor):
         "CREATE INDEX IF NOT EXISTS idx_user_audit_subject "
         "ON user_audit_events (user_id, created_at)"
     )
+
+def migrate_checkout_tables(cursor):
+    """Persist resumable carts and their reservation/audit state."""
+    cursor.execute("""CREATE TABLE IF NOT EXISTS checkout_carts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, store_id INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE','SUSPENDED','COMPLETED','VOIDED')),
+        customer_id INTEGER, discount_type TEXT, discount_value REAL NOT NULL DEFAULT 0,
+        discount_reason TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, completed_sale_id INTEGER,
+        FOREIGN KEY(user_id) REFERENCES users(id), FOREIGN KEY(store_id) REFERENCES stores(id),
+        FOREIGN KEY(customer_id) REFERENCES customers(id), FOREIGN KEY(completed_sale_id) REFERENCES sales(sale_id))""")
+    cursor.execute("""CREATE TABLE IF NOT EXISTS checkout_cart_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, cart_id INTEGER NOT NULL, product_id INTEGER NOT NULL,
+        quantity INTEGER NOT NULL CHECK(quantity > 0), created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(cart_id,product_id),
+        FOREIGN KEY(cart_id) REFERENCES checkout_carts(id), FOREIGN KEY(product_id) REFERENCES products(id))""")
+    cursor.execute("""CREATE TABLE IF NOT EXISTS checkout_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, cart_id INTEGER, user_id INTEGER NOT NULL,
+        event_type TEXT NOT NULL, details TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(cart_id) REFERENCES checkout_carts(id), FOREIGN KEY(user_id) REFERENCES users(id))""")
 
 
 def migrate_hardware_events(cursor):

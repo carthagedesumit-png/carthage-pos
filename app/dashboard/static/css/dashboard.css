@@ -49,6 +49,7 @@
 .inline-form button { border: 0; background: none; color: #174ea6; text-decoration: underline; cursor: pointer; }
 .label-preview { max-width: 520px; overflow: auto; padding: 1rem; background: #fff; }
 @media (max-width: 720px) { .form-grid { grid-template-columns: 1fr; } .full-width { grid-column: auto; } }
+.checkout-layout{display:grid;grid-template-columns:minmax(280px,.8fr) minmax(420px,1.4fr);gap:1rem}.product-result,.cart-line,.session-row,.payment-row{display:flex;gap:.7rem;align-items:center;padding:.65rem 0;border-bottom:1px solid #e6eaf0}.product-result span,.cart-line span{display:grid;flex:1}.product-placeholder{width:48px;height:48px;display:grid;place-items:center;background:#eef2f7;border-radius:.5rem;color:#667085}.cart-line input{max-width:80px}.checkout-totals{display:grid;gap:.5rem;padding:1rem 0}.checkout-totals span{display:flex;justify-content:space-between}.grand-total{font-size:1.35rem;border-top:2px solid #1d2939;padding-top:.65rem}.touch-button{min-height:48px;font-size:1rem}.customer-summary{display:grid;gap:.35rem;padding:1rem;background:#f5f8fc;border-radius:.6rem}.receipt-preview{white-space:pre-wrap;background:#fff;padding:1rem;max-height:600px;overflow:auto}.store-checkboxes{display:flex;flex-wrap:wrap;gap:1rem}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}kbd{font-size:.75rem;padding:.1rem .3rem;background:#eef2f7;border-radius:.2rem}@media(max-width:900px){.checkout-layout{grid-template-columns:1fr}}
 
 * {
     box-sizing: border-box;

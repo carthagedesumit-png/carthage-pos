@@ -101,6 +101,14 @@ function updateClock() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+    document.addEventListener("keydown", event => {
+        if (event.key === "F2" && document.getElementById("barcodeInput")) {
+            event.preventDefault(); document.getElementById("barcodeInput").focus();
+        }
+        if (event.key === "F4" && document.getElementById("completeSale")) {
+            event.preventDefault(); document.getElementById("completeSale").focus();
+        }
+    });
     document.querySelectorAll("form[method='post']").forEach(form => {
         form.addEventListener("submit", () => {
             window.setTimeout(() => {

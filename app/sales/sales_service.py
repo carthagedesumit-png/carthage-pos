@@ -316,8 +316,13 @@ def _prepare_sale_payments(
         raise SalesError("Redeemed points must be a whole number.") from exc
     if redeem_points < 0:
         raise SalesError("Redeemed points cannot be negative.")
+    customer_backed_allocation = bool(payments) and any(
+        str(item.get("payment_method", "")).upper() in {PAYMENT_WALLET, PAYMENT_CREDIT}
+        for item in payments
+    )
     if customer is None and (
-        redeem_points or payments or payment_method in {PAYMENT_WALLET, PAYMENT_CREDIT}
+        redeem_points or customer_backed_allocation
+        or payment_method in {PAYMENT_WALLET, PAYMENT_CREDIT}
     ):
         raise SalesError("Customer-backed payments require an active customer.")
     loyalty_amount = 0.0
