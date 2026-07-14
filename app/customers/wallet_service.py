@@ -47,6 +47,8 @@ def _public_wallet_change(session, customer_id, amount_delta, transaction_type, 
             conn, customer_id, amount_delta, transaction_type, session.user_id,
             store_id=session.store_id, notes=notes,
         )
+        from app.finance.posting_service import post_wallet_change
+        post_wallet_change(session, row["transaction_id"], conn)
     log_event(logger, "wallet_changed", customer_id=customer_id, amount_delta=amount_delta,
               user_id=session.user_id, balance=row["balance_after"])
     return row

@@ -155,6 +155,29 @@ def migrate_finance_tables(cursor):
             id INTEGER PRIMARY KEY AUTOINCREMENT, store_id INTEGER, user_id INTEGER NOT NULL,
             event_type TEXT NOT NULL, entity_type TEXT, entity_id INTEGER, details TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS finance_account_mappings (
+            mapping_key TEXT PRIMARY KEY, account_id INTEGER NOT NULL,
+            updated_by INTEGER, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(account_id) REFERENCES finance_accounts(id));
+        CREATE TABLE IF NOT EXISTS finance_posting_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL,
+            source_module TEXT NOT NULL, source_record_id INTEGER NOT NULL,
+            store_id INTEGER NOT NULL, transaction_date DATE NOT NULL,
+            description TEXT NOT NULL, reference TEXT, status TEXT NOT NULL DEFAULT 'PENDING',
+            journal_id INTEGER, idempotency_key TEXT NOT NULL UNIQUE, error_message TEXT,
+            attempts INTEGER NOT NULL DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            posted_at DATETIME, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(journal_id) REFERENCES finance_journals(id));
+        CREATE TABLE IF NOT EXISTS finance_opening_batches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, store_id INTEGER NOT NULL,
+            effective_date DATE NOT NULL, description TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'DRAFT',
+            equity_account_id INTEGER NOT NULL, journal_id INTEGER, created_by INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP, posted_at DATETIME,
+            UNIQUE(store_id,effective_date), FOREIGN KEY(journal_id) REFERENCES finance_journals(id));
+        CREATE TABLE IF NOT EXISTS finance_opening_lines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER NOT NULL,
+            account_id INTEGER NOT NULL, debit REAL NOT NULL DEFAULT 0, credit REAL NOT NULL DEFAULT 0,
+            description TEXT, FOREIGN KEY(batch_id) REFERENCES finance_opening_batches(id));
         CREATE INDEX IF NOT EXISTS idx_finance_journals_store_date ON finance_journals(store_id,entry_date);
         CREATE INDEX IF NOT EXISTS idx_finance_lines_account ON finance_journal_lines(account_id,journal_id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_finance_one_open_cash
@@ -178,6 +201,13 @@ def migrate_finance_tables(cursor):
         ('6000','Operating Expenses','EXPENSE'),('6100','Petty Cash Expense','EXPENSE')]
     cursor.executemany("INSERT OR IGNORE INTO finance_accounts(code,name,account_type,is_system) VALUES(?,?,?,1)",defaults)
     cursor.execute("INSERT OR IGNORE INTO finance_categories(name,account_id) SELECT 'General Operating',id FROM finance_accounts WHERE code='6000'")
+    mappings = [('cash','1000'),('bank','1010'),('card_clearing','1010'),('transfer_clearing','1010'),
+        ('accounts_receivable','1100'),('inventory_asset','1200'),('accounts_payable','2000'),
+        ('wallet_liability','2000'),('tax_payable','2100'),('opening_equity','3000'),
+        ('sales_revenue','4000'),('other_income','4200'),('cost_of_goods_sold','5000'),
+        ('operating_expense','6000'),('discounts','6000'),('stock_loss','6000'),
+        ('stock_gain','4200'),('cash_variance','6000')]
+    cursor.executemany("INSERT OR IGNORE INTO finance_account_mappings(mapping_key,account_id) SELECT ?,id FROM finance_accounts WHERE code=?",mappings)
 
 
 def migrate_api_sessions(cursor):

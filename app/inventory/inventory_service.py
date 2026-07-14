@@ -208,6 +208,9 @@ def adjust_stock(session, product_id, new_quantity, notes=None, store_id=None):
             conn, product_id, MOVEMENT_ADJUSTMENT, new_quantity - previous_quantity,
             previous_quantity, new_quantity, session.user_id, notes, store_id=store_id,
         )
+        movement_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        from app.finance.posting_service import post_inventory_adjustment
+        post_inventory_adjustment(session, movement_id, conn)
     log_event(
         logger,
         "stock_adjusted",

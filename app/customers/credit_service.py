@@ -60,6 +60,8 @@ def make_credit_payment(session: Any, customer_id: int, amount: float,
             conn, customer_id, -amount, "PAYMENT", session.user_id,
             store_id=session.store_id, notes=notes,
         )
+        from app.finance.posting_service import post_credit_payment
+        post_credit_payment(session, row["transaction_id"], conn)
     log_event(logger, "credit_payment_recorded", customer_id=customer_id,
               amount=amount, user_id=session.user_id, balance=row["balance_after"])
     return row

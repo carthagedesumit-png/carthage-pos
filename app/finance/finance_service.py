@@ -128,6 +128,8 @@ def cash_adjustment(session,cash_session_id,amount,reason,movement_type='ADJUSTM
         require_store_access(s,row['store_id'])
         if destination_store_id:require_store_access(s,int(destination_store_id))
         cur=conn.execute('INSERT INTO finance_cash_movements(store_id,cash_session_id,movement_type,amount,reason,destination_store_id,created_by) VALUES(?,?,?,?,?,?,?)',(row['store_id'],cash_session_id,movement_type,round(amount,2),reason,destination_store_id,s.user_id));_audit(conn,s,row['store_id'],'CASH_MOVEMENT','cash_movement',cur.lastrowid)
+        from app.finance.posting_service import post_cash_movement
+        post_cash_movement(s,cur.lastrowid,conn)
     return cur.lastrowid
 def close_cash(session,cash_session_id,closing_amount):
     s,_=_session(session,True);closing=_money(closing_amount,'Closing cash')

@@ -289,6 +289,8 @@ def create_sale(
                     item["unit_cost"],
                 )
             )
+        from app.finance.posting_service import post_sale
+        post_sale(session, sale_id, conn)
 
     log_event(
         logger,
@@ -502,6 +504,8 @@ def process_return(session, sale_id, return_items, reason):
             _reverse_customer_sale_value(
                 conn, sale, return_id, money_round(total_refunded), session.user_id
             )
+        from app.finance.posting_service import post_return
+        post_return(session, return_id, conn)
 
     log_event(
         logger,

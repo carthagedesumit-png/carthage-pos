@@ -259,6 +259,8 @@ def receive_purchase_order(
             "UPDATE purchase_orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (status, purchase_order_id),
         )
+        from app.finance.posting_service import post_goods_receipt
+        post_goods_receipt(session, receipt_id, conn)
     log_event(
         logger,
         "purchase_order_received",

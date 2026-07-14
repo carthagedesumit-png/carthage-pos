@@ -7,6 +7,8 @@ from app.core.exceptions import ApplicationError
 from app.core.runtime_paths import resource_path
 from app.dashboard.auth import CSRF_COOKIE,csrf_token,dashboard_session
 from app.finance import finance_service as finance
+from app.finance.integration_service import backfill,create_opening_batch,post_opening_batch,reconciliation_report
+from app.finance.posting_service import integration_health,retry_event
 
 router=APIRouter(prefix='/dashboard/finance');templates=Jinja2Templates(directory=str(resource_path('app','dashboard','templates')))
 async def _form(r):
@@ -16,14 +18,14 @@ def _go(section='',success=None,error=None):
     if success or error:path+='?'+('success=' if success else 'error=')+quote(str(success or error))
     return RedirectResponse(path,status_code=303)
 def _render(request,section,success='',error=''):
-    session=dashboard_session(request,required=True);data=finance.overview(session);token=csrf_token(request)
+    session=dashboard_session(request,required=True);data=finance.overview(session);data['integration']=integration_health(session);data['reconciliation']=reconciliation_report(session);token=csrf_token(request)
     response=templates.TemplateResponse(request,'finance.html',{'request':request,'title':'Financial Management','active_page':'finance','section':section,'data':data,'session':session,'can_write':session.role in finance.WRITE_ROLES,'csrf_token':token,'success':success,'error':error,'header':{'user':session.full_name,'store':f'Store #{session.store_id}'}})
     if not request.cookies.get(CSRF_COOKIE):response.set_cookie(CSRF_COOKIE,token,samesite='strict',secure=False)
     return response
 @router.get('',response_class=HTMLResponse)
 @router.get('/{section}',response_class=HTMLResponse)
 def page(request:Request,section:str='overview',success:str='',error:str=''):
-    if section not in {'overview','cash','banking','expenses','income','journals','accounts','reports','tax'}:section='overview'
+    if section not in {'overview','cash','banking','expenses','income','journals','accounts','reports','tax','integration','opening'}:section='overview'
     return _render(request,section,success,error)
 @router.post('/journals')
 async def journal(request:Request):
@@ -87,3 +89,23 @@ async def period(request:Request):
     v=await _form(request)
     try:finance.lock_period(dashboard_session(request,True),v.get('name'),v.get('start_date'),v.get('end_date'));return _go('reports','Accounting period locked.')
     except (ApplicationError,ValueError) as exc:return _go('reports',error=exc)
+@router.post('/opening')
+async def opening(request:Request):
+    v=await _form(request)
+    try:
+        lines=[{'account_id':a,'debit':d or 0,'credit':c or 0,'description':x} for a,d,c,x in zip(v.get('account_id',[]),v.get('debit',[]),v.get('credit',[]),v.get('line_description',[])) if a and (d or c)]
+        batch=create_opening_batch(dashboard_session(request,True),v.get('effective_date'),v.get('description'),lines,v.get('equity_account_id'))
+        if v.get('post')=='true':post_opening_batch(dashboard_session(request,True),batch['batch_id'])
+        return _go('opening','Opening balance batch saved.')
+    except (ApplicationError,ValueError) as exc:return _go('opening',error=exc)
+@router.post('/integration/backfill')
+async def run_backfill(request:Request):
+    v=await _form(request)
+    try:
+        result=backfill(dashboard_session(request,True),dry_run=v.get('confirm')!='true',module=v.get('module') or None,date_from=v.get('date_from') or None,date_to=v.get('date_to') or None)
+        return _go('integration',f"Backfill {'preview' if result['dry_run'] else 'completed'}: {result['eligible']} eligible, {result['posted']} posted.")
+    except (ApplicationError,ValueError) as exc:return _go('integration',error=exc)
+@router.post('/integration/{event_id}/retry')
+def retry(request:Request,event_id:int):
+    try:retry_event(dashboard_session(request,True),event_id);return _go('integration','Posting retried successfully.')
+    except (ApplicationError,ValueError) as exc:return _go('integration',error=exc)
