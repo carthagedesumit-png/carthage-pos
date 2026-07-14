@@ -81,9 +81,103 @@ def initialize_database():
         migrate_sale_items_table(cursor)
         migrate_sales_returns_table(cursor)
         migrate_customer_financial_tables(cursor)
+        migrate_finance_tables(cursor)
         migrate_inventory_compatibility(cursor)
         cursor.execute(f"PRAGMA user_version = {DATABASE_SCHEMA_VERSION}")
     print("Carthage POS Database Initialized Successfully.")
+
+
+def migrate_finance_tables(cursor):
+    """Create store-scoped double-entry accounting and cash-operation storage."""
+    cursor.executescript("""
+        CREATE TABLE IF NOT EXISTS finance_accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL, account_type TEXT NOT NULL CHECK(account_type IN
+            ('ASSET','LIABILITY','EQUITY','INCOME','EXPENSE')), parent_id INTEGER,
+            is_system INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(parent_id) REFERENCES finance_accounts(id));
+        CREATE TABLE IF NOT EXISTS finance_periods (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, store_id INTEGER NOT NULL,
+            name TEXT NOT NULL, start_date DATE NOT NULL, end_date DATE NOT NULL,
+            is_locked INTEGER NOT NULL DEFAULT 0, locked_by INTEGER, locked_at DATETIME,
+            UNIQUE(store_id,start_date,end_date), FOREIGN KEY(store_id) REFERENCES stores(id));
+        CREATE TABLE IF NOT EXISTS finance_journals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, store_id INTEGER NOT NULL,
+            entry_date DATE NOT NULL, reference TEXT, description TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','POSTED','VOID')),
+            source_type TEXT, source_id INTEGER, created_by INTEGER NOT NULL,
+            posted_by INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, posted_at DATETIME,
+            FOREIGN KEY(store_id) REFERENCES stores(id), FOREIGN KEY(created_by) REFERENCES users(id));
+        CREATE TABLE IF NOT EXISTS finance_journal_lines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, journal_id INTEGER NOT NULL,
+            account_id INTEGER NOT NULL, description TEXT, debit REAL NOT NULL DEFAULT 0,
+            credit REAL NOT NULL DEFAULT 0, tax_rate_id INTEGER,
+            FOREIGN KEY(journal_id) REFERENCES finance_journals(id),
+            FOREIGN KEY(account_id) REFERENCES finance_accounts(id));
+        CREATE TABLE IF NOT EXISTS finance_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
+            account_id INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY(account_id) REFERENCES finance_accounts(id));
+        CREATE TABLE IF NOT EXISTS finance_vendors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
+            email TEXT, phone TEXT, is_active INTEGER NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS finance_expenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, store_id INTEGER NOT NULL,
+            expense_date DATE NOT NULL, category_id INTEGER NOT NULL, vendor_id INTEGER,
+            amount REAL NOT NULL, tax_amount REAL NOT NULL DEFAULT 0, description TEXT NOT NULL,
+            expense_type TEXT NOT NULL DEFAULT 'OPERATING', status TEXT NOT NULL DEFAULT 'PENDING',
+            attachment_name TEXT, attachment_type TEXT, recurring_rule TEXT,
+            created_by INTEGER NOT NULL, approved_by INTEGER, journal_id INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP, approved_at DATETIME,
+            FOREIGN KEY(store_id) REFERENCES stores(id), FOREIGN KEY(category_id) REFERENCES finance_categories(id));
+        CREATE TABLE IF NOT EXISTS finance_income (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, store_id INTEGER NOT NULL,
+            income_date DATE NOT NULL, income_type TEXT NOT NULL, amount REAL NOT NULL,
+            tax_amount REAL NOT NULL DEFAULT 0, description TEXT NOT NULL,
+            created_by INTEGER NOT NULL, journal_id INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS finance_cash_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, store_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+            opening_amount REAL NOT NULL, expected_amount REAL, closing_amount REAL, variance REAL,
+            status TEXT NOT NULL DEFAULT 'OPEN', opened_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            closed_at DATETIME);
+        CREATE TABLE IF NOT EXISTS finance_cash_movements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, store_id INTEGER NOT NULL,
+            cash_session_id INTEGER, movement_type TEXT NOT NULL, amount REAL NOT NULL,
+            reason TEXT NOT NULL, destination_store_id INTEGER, created_by INTEGER NOT NULL,
+            journal_id INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS finance_tax_rates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, rate REAL NOT NULL,
+            pricing_mode TEXT NOT NULL DEFAULT 'EXCLUSIVE', liability_account_id INTEGER,
+            is_active INTEGER NOT NULL DEFAULT 1);
+        CREATE TABLE IF NOT EXISTS finance_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, store_id INTEGER, user_id INTEGER NOT NULL,
+            event_type TEXT NOT NULL, entity_type TEXT, entity_id INTEGER, details TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+        CREATE INDEX IF NOT EXISTS idx_finance_journals_store_date ON finance_journals(store_id,entry_date);
+        CREATE INDEX IF NOT EXISTS idx_finance_lines_account ON finance_journal_lines(account_id,journal_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_finance_one_open_cash
+            ON finance_cash_sessions(store_id,user_id) WHERE status='OPEN';
+        CREATE TRIGGER IF NOT EXISTS finance_posted_journal_immutable BEFORE UPDATE ON finance_journals
+            WHEN OLD.status='POSTED' BEGIN SELECT RAISE(ABORT,'Posted journals are immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS finance_posted_journal_no_delete BEFORE DELETE ON finance_journals
+            WHEN OLD.status='POSTED' BEGIN SELECT RAISE(ABORT,'Posted journals are immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS finance_posted_lines_immutable_update BEFORE UPDATE ON finance_journal_lines
+            WHEN (SELECT status FROM finance_journals WHERE id=OLD.journal_id)='POSTED'
+            BEGIN SELECT RAISE(ABORT,'Posted journal lines are immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS finance_posted_lines_immutable_delete BEFORE DELETE ON finance_journal_lines
+            WHEN (SELECT status FROM finance_journals WHERE id=OLD.journal_id)='POSTED'
+            BEGIN SELECT RAISE(ABORT,'Posted journal lines are immutable'); END;
+    """)
+    defaults = [
+        ('1000','Cash on Hand','ASSET'),('1010','Bank','ASSET'),('1100','Accounts Receivable','ASSET'),
+        ('1200','Inventory','ASSET'),('2000','Accounts Payable','LIABILITY'),('2100','Tax Payable','LIABILITY'),
+        ('3000','Owner Equity','EQUITY'),('4000','Sales Revenue','INCOME'),('4100','Service Income','INCOME'),
+        ('4200','Other Income','INCOME'),('5000','Cost of Goods Sold','EXPENSE'),
+        ('6000','Operating Expenses','EXPENSE'),('6100','Petty Cash Expense','EXPENSE')]
+    cursor.executemany("INSERT OR IGNORE INTO finance_accounts(code,name,account_type,is_system) VALUES(?,?,?,1)",defaults)
+    cursor.execute("INSERT OR IGNORE INTO finance_categories(name,account_id) SELECT 'General Operating',id FROM finance_accounts WHERE code='6000'")
 
 
 def migrate_api_sessions(cursor):
