@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -134,7 +135,7 @@ class DeploymentPlatformTestCase(unittest.TestCase):
         self.assertTrue(self.backup_dir.is_dir())
 
     def test_clean_uninstall_removes_only_managed_business_data(self):
-        self.install()
+        state = self.install()
         unrelated = self.backup_dir / "keep-me.txt"
         unrelated.write_text("not managed", encoding="utf-8")
         from app.deployment.installer_service import uninstall_installation
@@ -143,8 +144,12 @@ class DeploymentPlatformTestCase(unittest.TestCase):
             str(self.install_dir), remove_data=True, confirmation="REMOVE-ALL-DATA"
         )
         self.assertTrue(result["remove_data"])
+        self.assertFalse(Path(state["environment"]["POS_DEPLOYMENT_STATE_FILE"]).exists())
         self.assertFalse(self.database_path.exists())
         self.assertTrue(unrelated.is_file())
+        with patch.dict(os.environ, {"PROGRAMDATA": str(self.root / "ProgramData")}, clear=False):
+            repeated = uninstall_installation(str(self.install_dir))
+        self.assertTrue(repeated["already_uninstalled"])
 
     def test_version_and_update_manifest_compatibility_and_staging(self):
         from app.core.version import compare_versions, compatibility_report
@@ -204,6 +209,203 @@ class DeploymentPlatformTestCase(unittest.TestCase):
             self.assertEqual(client.post("/api/v1/deployment/verify", headers=headers).status_code, 200)
             compatible = client.get("/api/v1/deployment/compatibility", headers=headers)
             self.assertTrue(compatible.json()["data"]["compatible"])
+
+    def test_noninteractive_clean_machine_deployment_creates_programdata_state_database_and_admin(self):
+        from deployment_cli import main as deployment_main
+
+        program_data = self.root / "ProgramData"
+        install_dir = self.root / "Program Files" / "Carthage Business Operating System"
+        config_dir = program_data / "Carthage POS" / "config"
+        database_path = program_data / "Carthage POS" / "data" / "carthage-pos.db"
+        backup_dir = program_data / "Carthage POS" / "backups"
+        args = [
+            "configure",
+            "--install-dir", str(install_dir),
+            "--business-name", "ProgramData Store",
+            "--store-name", "Main Store",
+            "--admin-username", "owner.admin",
+            "--admin-password", "StrongAdmin123",
+            "--admin-full-name", "Business Owner",
+            "--config-dir", str(config_dir),
+            "--database-path", str(database_path),
+            "--backup-path", str(backup_dir),
+            "--currency", "USD",
+            "--tax-rate", "0.075",
+            "--timezone", "UTC",
+            "--deployment-type", "desktop",
+            "--receipt-printer", "none",
+        ]
+
+        with patch.dict(os.environ, {"PROGRAMDATA": str(program_data)}, clear=False):
+            with patch("auth.bcrypt.gensalt", return_value=bcrypt.gensalt(rounds=4)):
+                with patch("app.deployment.wizard.SetupWizard.collect", side_effect=AssertionError("wizard called")):
+                    self.assertEqual(deployment_main(args), 0)
+
+        config_path = config_dir / "carthage-pos.env"
+        state_path = config_dir / "deployment.json"
+        windows_path = config_dir / "windows-integration.json"
+        self.assertTrue(config_dir.is_dir())
+        self.assertTrue((program_data / "Carthage POS" / "data").is_dir())
+        self.assertTrue(backup_dir.is_dir())
+        self.assertTrue(config_path.is_file())
+        self.assertTrue(state_path.is_file())
+        self.assertTrue(windows_path.is_file())
+        self.assertTrue(database_path.is_file())
+
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["configuration_directory"], str(config_dir.resolve()))
+        self.assertEqual(state["runtime_directory"], str((program_data / "Carthage POS").resolve()))
+        self.assertEqual(state["database"]["integrity"], "ok")
+        self.assertNotIn("StrongAdmin123", json.dumps(state))
+        self.assertNotIn("StrongAdmin123", config_path.read_text(encoding="utf-8"))
+
+        from auth import authenticate_user
+        old_database = os.environ.get("CARTHAGE_POS_DB")
+        os.environ["CARTHAGE_POS_DB"] = str(database_path)
+        try:
+            session = authenticate_user("owner.admin", "StrongAdmin123")
+        finally:
+            if old_database is None:
+                os.environ.pop("CARTHAGE_POS_DB", None)
+            else:
+                os.environ["CARTHAGE_POS_DB"] = old_database
+        self.assertEqual(session.role, "admin")
+
+    def test_packaged_startup_loads_programdata_configuration(self):
+        state = self.install()
+        program_data = self.root / "ProgramData"
+        runtime = program_data / "Carthage POS"
+        config_dir = runtime / "config"
+        config_dir.mkdir(parents=True)
+        source_config = Path(state["configuration_file"])
+        target_config = config_dir / "carthage-pos.env"
+        target_config.write_text(source_config.read_text(encoding="utf-8"), encoding="utf-8")
+        self.assertIn("CARTHAGE_POS_DB", target_config.read_text(encoding="utf-8"))
+
+        from app.core.config import reset_config_cache
+        import main
+        previous = os.environ.pop("CARTHAGE_POS_DB", None)
+        try:
+            reset_config_cache()
+            with patch.dict(os.environ, {"PROGRAMDATA": str(program_data)}, clear=False):
+                with patch.object(main.sys, "frozen", True, create=True):
+                    with patch.object(main.sys, "executable", str(self.root / "Program Files" / "CBOS" / "CarthagePOS.exe")):
+                        loaded = main.load_deployment_environment()
+                        self.assertEqual(Path(loaded), target_config)
+                        self.assertEqual(os.environ["CARTHAGE_POS_DB"], str(self.database_path.resolve()))
+        finally:
+            if previous is not None:
+                os.environ["CARTHAGE_POS_DB"] = previous
+            else:
+                os.environ.pop("CARTHAGE_POS_DB", None)
+            reset_config_cache()
+
+    def test_packaged_bootstrap_starts_server_without_terminal_login(self):
+        import main
+
+        config = type("Config", (), {
+            "deployment": type("Deployment", (), {"seed_sample_data": False})(),
+        })()
+        with patch.object(main.sys, "frozen", True, create=True):
+            with patch.object(main, "load_deployment_environment"):
+                with patch.object(main, "initialize_database"):
+                    with patch.object(main, "get_config", return_value=config):
+                        with patch.object(main, "run_packaged_server") as server:
+                            with patch.object(main.AuthenticationSystem, "login", side_effect=AssertionError("terminal login called")):
+                                main.bootstrap()
+        server.assert_called_once_with()
+
+    def test_incomplete_noninteractive_deployment_fails_without_wizard_fallback(self):
+        from deployment_cli import main as deployment_main
+
+        stderr = io.StringIO()
+        with patch("sys.stderr", stderr):
+            with patch("sys.stdin.isatty", return_value=False):
+                with patch.dict(os.environ, {"PROGRAMDATA": str(self.root / "ProgramData")}, clear=False):
+                    with patch("app.deployment.wizard.SetupWizard.collect", side_effect=AssertionError("wizard called")):
+                        code = deployment_main([
+                            "configure",
+                            "--install-dir", str(self.install_dir),
+                            "--business-name", "Incomplete Store",
+                        ])
+        self.assertEqual(code, 1)
+        self.assertIn("missing required values", stderr.getvalue())
+
+    def test_installer_uses_checked_noninteractive_deployment_code(self):
+        script = Path("installer/carthage-pos.iss").read_text(encoding="utf-8")
+        self.assertIn("[Code]", script)
+        self.assertIn("RunDeploymentConfiguration", script)
+        self.assertIn("SetupValue(BusinessPage, 0, 'CBOSBusiness')", script)
+        self.assertIn("LoadSilentAdminPassword", script)
+        self.assertIn("WizardSilent()", script)
+        self.assertIn("--business-name", script)
+        self.assertIn("--config-dir", script)
+        self.assertIn("RaiseException('CBOS deployment failed", script)
+        self.assertNotIn('Parameters: "configure --install-dir', script)
+        self.assertNotIn("AdminPage.Values[1] := '", script)
+
+    def test_noninteractive_deployment_accepts_values_with_spaces_without_persisting_password(self):
+        from deployment_cli import main as deployment_main
+
+        program_data = self.root / "Program Data With Spaces"
+        install_dir = self.root / "Program Files" / "Carthage Business Operating System"
+        config_dir = program_data / "Carthage POS" / "config"
+        database_path = program_data / "Carthage POS" / "data" / "carthage-pos.db"
+        backup_dir = program_data / "Carthage POS" / "backup files"
+        password = "StrongAdmin123"
+        args = [
+            "configure",
+            "--install-dir", str(install_dir),
+            "--business-name", "Carthage Pilot Market",
+            "--store-name", "Main Pilot Store",
+            "--admin-username", "pilot.admin",
+            "--admin-password", password,
+            "--admin-full-name", "Pilot Administrator",
+            "--config-dir", str(config_dir),
+            "--database-path", str(database_path),
+            "--backup-path", str(backup_dir),
+            "--currency", "USD",
+            "--tax-rate", "0.05",
+            "--timezone", "UTC",
+            "--deployment-type", "desktop",
+            "--receipt-printer", "none",
+        ]
+
+        with patch("auth.bcrypt.gensalt", return_value=bcrypt.gensalt(rounds=4)):
+            self.assertEqual(deployment_main(args), 0)
+
+        config_text = (config_dir / "carthage-pos.env").read_text(encoding="utf-8")
+        state_text = (config_dir / "deployment.json").read_text(encoding="utf-8")
+        audit_path = install_dir / "logs" / "deployment-audit.jsonl"
+        self.assertTrue(database_path.is_file())
+        self.assertTrue(backup_dir.is_dir())
+        self.assertIn("Carthage Pilot Market", config_text)
+        self.assertNotIn(password, config_text)
+        self.assertNotIn(password, state_text)
+        if audit_path.is_file():
+            self.assertNotIn(password, audit_path.read_text(encoding="utf-8"))
+
+    def test_installer_silent_parameter_contract_is_complete(self):
+        script = Path("installer/carthage-pos.iss").read_text(encoding="utf-8")
+        for parameter in (
+            "CBOSBusiness",
+            "CBOSStore",
+            "CBOSAdminUser",
+            "CBOSAdminPasswordFile",
+            "CBOSAdminFullName",
+            "CBOSCurrency",
+            "CBOSTaxRate",
+            "CBOSTimezone",
+            "CBOSDeploymentType",
+            "CBOSPrinter",
+        ):
+            self.assertIn(f"{{param:{parameter}|", script)
+            if parameter == "CBOSAdminPasswordFile":
+                self.assertIn("LoadSilentAdminPassword", script)
+            else:
+                self.assertIn(f"RequireSilentParam('{parameter}'", script)
+        self.assertIn("CBOSRuntimeRoot", script)
+        self.assertIn("if not WizardSilent() then begin", script)
 
 
 if __name__ == "__main__":

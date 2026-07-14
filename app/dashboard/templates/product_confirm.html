@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero"><div><h1>Confirm {{ "Reactivation" if active else "Deactivation" }}</h1><p>{{ product.name }} ({{ product.sku }})</p></div></section>
+<section class="panel narrow-panel confirmation-panel">
+ <p>{{ "Reactivate this product for operational selection?" if active else "Deactivate this product while preserving sales, stock, and report history?" }}</p>
+ <form method="post" action="{{ action }}?csrf_token={{ csrf_token }}"><input type="hidden" name="active" value="{{ 'true' if active else 'false' }}"><input type="hidden" name="store_id" value="{{ store_id }}"><button class="primary-action" type="submit">Confirm</button> <a href="/dashboard/inventory/products/{{ product.id }}">Cancel</a></form>
+</section>
+{% endblock %}

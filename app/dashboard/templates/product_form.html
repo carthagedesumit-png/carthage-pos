@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero"><div><h1>{{ form_title }}</h1><p>Create or update a store-aware product using the inventory service.</p></div><div class="hero-status"><a class="hero-link" href="/dashboard/inventory">Cancel</a></div></section>
+<section class="panel form-panel">
+  {% if errors.form %}<div class="alert error" role="alert"><strong>Please correct the form.</strong> {{ errors.form }}</div>{% endif %}
+  <form method="post" action="{{ action }}?csrf_token={{ csrf_token }}" class="management-form form-grid" aria-label="{{ form_title }} form">
+    <label><span>Product name</span><input name="name" value="{{ values.name or '' }}" required maxlength="200"></label>
+    <label><span>SKU</span><input name="sku" value="{{ values.sku or '' }}" required></label>
+    <label><span>Barcode</span><input name="barcode" value="{{ values.barcode or '' }}" placeholder="Leave blank to auto-generate"></label>
+    <label><span>Barcode format</span><select name="barcode_format">{% for format in barcode_formats %}<option value="{{ format }}">{{ format }}</option>{% endfor %}</select></label>
+    <label><span>Category</span><select name="category_id"><option value="">Uncategorized</option>{% for item in categories %}<option value="{{ item.id }}" {% if values.category_id == item.id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></label>
+    <label><span>Supplier</span><select name="supplier_id"><option value="">Unassigned</option>{% for item in suppliers %}<option value="{{ item.id }}" {% if values.supplier_id == item.id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select><small><a href="/dashboard/procurement">Manage suppliers in Procurement</a></small></label>
+    <label><span>Selling price</span><input type="number" min="0" step="0.01" name="selling_price" value="{{ values.selling_price if values.selling_price is not none else 0 }}" required></label>
+    <label><span>Opening / average cost</span><input type="number" min="0" step="0.01" name="cost_price" value="{{ values.cost_price if values.cost_price is not none else 0 }}" required></label>
+    {% if not product %}<label><span>Opening quantity</span><input type="number" min="0" name="quantity_in_stock" value="{{ values.quantity_in_stock or 0 }}" required></label>{% endif %}
+    <label><span>Reorder level</span><input type="number" min="0" name="reorder_level" value="{{ values.reorder_level or 0 }}" required></label>
+    <label><span>Store</span><select name="store_id" required>{% for item in stores %}<option value="{{ item.id }}" {% if values.store_id == item.id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></label>
+    <label><span>Unit</span><input name="unit" value="{{ values.unit or 'each' }}" required></label>
+    <label><span>Promotion price (optional)</span><input type="number" min="0" step="0.01" name="promotion_price" value="{{ values.promotion_price or '' }}"></label>
+    <label class="full-width"><span>Description</span><textarea name="description" rows="4">{{ values.description or '' }}</textarea></label>
+    <div class="form-actions full-width"><button class="primary-action" type="submit">{{ "Save Changes" if product else "Create Product" }}</button><a href="/dashboard/inventory">Cancel</a></div>
+  </form>
+</section>
+{% endblock %}

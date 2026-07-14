@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 
 class ProductionReadinessTestCase(unittest.TestCase):
     def setUp(self):
+        self.previous_program_data = os.environ.get("PROGRAMDATA")
+        self.program_data_dir = tempfile.TemporaryDirectory()
         self.db_file = tempfile.NamedTemporaryFile(delete=False)
         self.db_file.close()
         self.backup_dir = tempfile.TemporaryDirectory()
@@ -26,6 +28,7 @@ class ProductionReadinessTestCase(unittest.TestCase):
                 "POS_AUTH_RATE_LIMIT_ATTEMPTS": "2",
                 "POS_AUTH_RATE_LIMIT_WINDOW_SECONDS": "60",
                 "POS_SESSION_IDLE_MINUTES": "1",
+                "PROGRAMDATA": self.program_data_dir.name,
             }
         )
 
@@ -61,6 +64,10 @@ class ProductionReadinessTestCase(unittest.TestCase):
             "POS_STRICT_STARTUP_VALIDATION",
         ):
             os.environ.pop(name, None)
+        if self.previous_program_data is None:
+            os.environ.pop("PROGRAMDATA", None)
+        else:
+            os.environ["PROGRAMDATA"] = self.previous_program_data
         reset_rate_limit_state()
         reset_config_cache()
         os.unlink(self.db_file.name)
@@ -68,6 +75,7 @@ class ProductionReadinessTestCase(unittest.TestCase):
         self.log_dir.cleanup()
         self.license_dir.cleanup()
         self.activation_dir.cleanup()
+        self.program_data_dir.cleanup()
 
     def login_headers(self):
         response = self.client.post(

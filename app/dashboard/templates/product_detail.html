@@ -27,8 +27,11 @@
         <span class="status warning">Missing Barcode</span>
         {% endif %}
         <a class="hero-link" href="/dashboard/inventory">Back to Inventory</a>
+        {% if can_manage %}<a class="hero-link" href="/dashboard/inventory/products/{{ product_id }}/edit">Edit Product</a>{% endif %}
     </div>
 </section>
+{% if success %}<div class="alert success" role="status">{{ success }}</div>{% endif %}{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% if can_manage %}<nav class="workspace-actions" aria-label="Product actions"><a href="/dashboard/inventory/products/{{ product_id }}/receive">Receive Stock</a><a href="/dashboard/inventory/products/{{ product_id }}/adjust">Adjust Stock</a><a href="/dashboard/inventory/products/{{ product_id }}/lifecycle?active={{ 'false' if detail.product.is_active else 'true' }}">{{ 'Deactivate' if detail.product.is_active else 'Reactivate' }}</a></nav>{% endif %}
 
 <section class="cards">
     <div class="card accent-blue">
@@ -45,7 +48,7 @@
     </div>
     <div class="card accent-red">
         <span>Label Actions</span>
-        <strong>Planned</strong>
+        <strong>{{ "Ready" if detail.product.has_barcode else "Needs Barcode" }}</strong>
     </div>
 </section>
 
@@ -112,12 +115,8 @@
     </div>
 
     <div class="panel">
-        <h2>Label Foundation</h2>
-        <div class="quick-actions label-actions">
-            {% for action in detail.label_actions %}
-            <a class="disabled-action" href="#">{{ action.label }}</a>
-            {% endfor %}
-        </div>
+        <h2>Barcode &amp; Labels</h2>
+        {% if can_manage %}<form method="post" action="/dashboard/inventory/products/{{ product_id }}/barcode?csrf_token={{ csrf_token }}" class="management-form"><label><span>Barcode</span><input name="barcode" value="{{ detail.product.primary_barcode or '' }}"></label><label><span>Format</span><select name="barcode_format"><option>CODE128</option><option>CODE39</option><option>EAN8</option><option>EAN13</option><option>UPCA</option><option>QR</option></select></label><label><span>Label quantity</span><input type="number" min="1" name="quantity" value="1"></label><input type="hidden" name="store_id" value="{{ session.store_id }}"><div class="form-actions"><button name="operation" value="assign">Assign</button><button name="operation" value="generate">Generate</button><button name="operation" value="preview">Preview</button><button name="operation" value="print">Print</button></div></form>{% else %}<p class="empty-state">Sign in with inventory-management permission for barcode and label actions.</p>{% endif %}
     </div>
 </section>
 

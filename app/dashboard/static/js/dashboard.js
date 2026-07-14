@@ -101,6 +101,16 @@ function updateClock() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+    document.querySelectorAll("form[method='post']").forEach(form => {
+        form.addEventListener("submit", () => {
+            window.setTimeout(() => {
+                form.querySelectorAll("button[type='submit']").forEach(button => {
+                    button.disabled = true;
+                    button.setAttribute("aria-busy", "true");
+                });
+            }, 0);
+        }, { once: true });
+    });
     loadBusinessIntelligence();
     updateClock();
 

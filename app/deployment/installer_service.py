@@ -26,21 +26,23 @@ from app.deployment.windows_integration import (
 
 
 logger = get_logger("deployment.installer")
+DEFAULT_RUNTIME_DIRECTORY_NAME = "Carthage POS"
 
 
 def fresh_install(request: SetupRequest) -> dict:
     """Perform first-run configuration and atomic database initialization."""
     request = request.validated()
     install_dir = Path(request.installation_directory)
-    state_path = _state_path(install_dir)
+    config_dir = _configuration_dir(request, install_dir)
+    state_path = _state_path(install_dir, config_dir)
     database_path = Path(request.database_path)
     if state_path.exists():
         raise InstallationError("Carthage POS is already installed at this location.")
     if database_path.exists():
         raise InstallationError("Fresh installation will not overwrite an existing database.")
     _prepare_directories(request)
-    config_path = install_dir / "config" / "carthage-pos.env"
-    windows_path = install_dir / "config" / "windows-integration.json"
+    config_path = config_dir / "carthage-pos.env"
+    windows_path = config_dir / "windows-integration.json"
     created_files = [config_path, windows_path, state_path]
     try:
         generated = generate_environment_file(request, str(config_path))
@@ -123,7 +125,10 @@ def repair_installation(installation_directory: str) -> dict:
     database_path = Path(environment.get("CARTHAGE_POS_DB", ""))
     if not database_path.is_file():
         raise InstallationError("Repair cannot continue because the database is missing.")
-    _prepare_runtime_directories(install_dir, database_path, Path(environment["POS_BACKUP_DIRECTORY"]))
+    _prepare_runtime_directories(
+        install_dir, database_path, Path(environment["POS_BACKUP_DIRECTORY"]),
+        config_path.parent,
+    )
     rollback = _snapshot_database(database_path, install_dir / "rollback", "repair")
     try:
         with _temporary_environment(environment):
@@ -152,6 +157,14 @@ def uninstall_installation(installation_directory: str, *, remove_data: bool = F
                            confirmation: str | None = None) -> dict:
     """Remove installer-generated state while preserving business data by default."""
     install_dir = Path(installation_directory).expanduser().resolve()
+    if not _find_state_path(install_dir).is_file():
+        return {
+            "uninstalled": True,
+            "removed": [],
+            "preserved": [],
+            "remove_data": remove_data,
+            "already_uninstalled": True,
+        }
     state, environment = _load_installation(install_dir)
     if remove_data and confirmation != "REMOVE-ALL-DATA":
         raise InstallationError("Removing business data requires REMOVE-ALL-DATA confirmation.")
@@ -170,7 +183,7 @@ def uninstall_installation(installation_directory: str, *, remove_data: bool = F
     for path in (
         Path(state["configuration_file"]),
         Path(state["windows_integration_file"]),
-        _state_path(install_dir),
+        Path(environment.get("POS_DEPLOYMENT_STATE_FILE") or _state_path(install_dir)),
     ):
         path.unlink(missing_ok=True)
         removed.append(str(path))
@@ -180,7 +193,7 @@ def uninstall_installation(installation_directory: str, *, remove_data: bool = F
 
 
 def get_deployment_state(installation_directory: str) -> dict:
-    path = _state_path(Path(installation_directory).expanduser().resolve())
+    path = _find_state_path(Path(installation_directory).expanduser().resolve())
     if not path.is_file():
         return {"installed": False, "state_file": str(path)}
     return {"installed": True, **_read_json(path)}
@@ -219,6 +232,8 @@ def _build_state(request, environment, config_path, windows_path, operation):
         "installer_version": INSTALLER_VERSION,
         "versions": VersionInfo().to_dict(),
         "installation_directory": request.installation_directory,
+        "runtime_directory": str(Path(config_path).parent.parent),
+        "configuration_directory": str(Path(config_path).parent),
         "configuration_file": str(config_path),
         "windows_integration_file": str(windows_path),
         "environment": environment,
@@ -230,25 +245,28 @@ def _build_state(request, environment, config_path, windows_path, operation):
 
 
 def _prepare_directories(request):
+    config_dir = _configuration_dir(request, Path(request.installation_directory))
     _prepare_runtime_directories(
         Path(request.installation_directory), Path(request.database_path),
-        Path(request.backup_directory),
+        Path(request.backup_directory), config_dir,
     )
     marker = Path(request.backup_directory) / ".carthage-pos-backup-root"
     if not marker.exists():
         marker.write_text("Managed by Carthage POS.\n", encoding="utf-8")
 
 
-def _prepare_runtime_directories(install_dir, database_path, backup_path):
-    for path in (install_dir, install_dir / "config", install_dir / "logs",
-                 install_dir / "updates", install_dir / "rollback",
-                 install_dir / "licenses", install_dir / "licenses" / "activation",
+def _prepare_runtime_directories(install_dir, database_path, backup_path, config_dir=None):
+    config_dir = Path(config_dir) if config_dir else install_dir / "config"
+    runtime_dir = config_dir.parent
+    for path in (install_dir, config_dir, runtime_dir / "logs",
+                 runtime_dir / "updates", runtime_dir / "rollback",
+                 runtime_dir / "licenses", runtime_dir / "licenses" / "activation",
                  database_path.parent, backup_path):
         path.mkdir(parents=True, exist_ok=True)
 
 
 def _load_installation(install_dir):
-    state_path = _state_path(install_dir)
+    state_path = _find_state_path(install_dir)
     if not state_path.is_file():
         raise InstallationError("Installed deployment state was not found.")
     state = _read_json(state_path)
@@ -329,8 +347,31 @@ def _database_version(path):
         connection.close()
 
 
-def _state_path(install_dir):
-    return install_dir / "config" / "deployment.json"
+def _state_path(install_dir, config_dir=None):
+    return (Path(config_dir) if config_dir else install_dir / "config") / "deployment.json"
+
+
+def _find_state_path(install_dir):
+    legacy = install_dir / "config" / "deployment.json"
+    if legacy.is_file():
+        return legacy
+    return _default_configuration_dir() / "deployment.json"
+
+
+def _configuration_dir(request, install_dir):
+    if request.configuration_directory:
+        return Path(request.configuration_directory)
+    return Path(install_dir) / "config"
+
+
+def _default_runtime_dir():
+    program_data = os.environ.get("PROGRAMDATA")
+    base = Path(program_data) if program_data else Path.home() / "AppData" / "Local"
+    return base / DEFAULT_RUNTIME_DIRECTORY_NAME
+
+
+def _default_configuration_dir():
+    return _default_runtime_dir() / "config"
 
 
 def _read_json(path):

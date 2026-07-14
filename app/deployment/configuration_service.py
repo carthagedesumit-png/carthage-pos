@@ -13,12 +13,14 @@ from app.deployment.models import SetupRequest
 def build_environment(request: SetupRequest) -> dict[str, str]:
     request = request.validated()
     install_dir = Path(request.installation_directory)
+    config_dir = Path(request.configuration_directory) if request.configuration_directory else install_dir / "config"
+    runtime_dir = config_dir.parent
     printer_enabled = request.printer_preference != "none"
     return {
         "CARTHAGE_POS_DB": request.database_path,
         "POS_BUSINESS_NAME": request.business_name,
         "POS_INSTALLATION_DIRECTORY": request.installation_directory,
-        "POS_DEPLOYMENT_STATE_FILE": str(install_dir / "config" / "deployment.json"),
+        "POS_DEPLOYMENT_STATE_FILE": str(config_dir / "deployment.json"),
         "POS_BACKUP_DIRECTORY": request.backup_directory,
         "POS_BACKUP_RETENTION_DAYS": "30",
         "POS_BACKUP_MAX_COUNT": "30",
@@ -35,15 +37,15 @@ def build_environment(request: SetupRequest) -> dict[str, str]:
         "POS_API_PORT": str(request.api_port),
         "POS_API_SESSION_HOURS": "12",
         "POS_LOG_LEVEL": request.log_level,
-        "POS_LOG_DIRECTORY": str(install_dir / "logs"),
+        "POS_LOG_DIRECTORY": str(runtime_dir / "logs"),
         "POS_SEED_SAMPLE_DATA": "false",
         "POS_UPDATE_CHANNEL": "stable",
-        "POS_UPDATE_MANIFEST": str(install_dir / "updates" / "manifest.json"),
+        "POS_UPDATE_MANIFEST": str(runtime_dir / "updates" / "manifest.json"),
         "POS_AUTO_UPDATE_CHECK": "false",
-        "POS_LICENSE_DIRECTORY": str(install_dir / "licenses"),
-        "POS_LICENSE_FILE": str(install_dir / "licenses" / "license.json"),
-        "POS_ACTIVATION_DIRECTORY": str(install_dir / "licenses" / "activation"),
-        "POS_LICENSE_PUBLIC_KEY_FILE": str(install_dir / "config" / "license-public-key.json"),
+        "POS_LICENSE_DIRECTORY": str(runtime_dir / "licenses"),
+        "POS_LICENSE_FILE": str(runtime_dir / "licenses" / "license.json"),
+        "POS_ACTIVATION_DIRECTORY": str(runtime_dir / "licenses" / "activation"),
+        "POS_LICENSE_PUBLIC_KEY_FILE": str(config_dir / "license-public-key.json"),
         "POS_LICENSE_GRACE_PERIOD_DAYS": "7",
         "POS_LICENSE_EVALUATION_DAYS": "30",
         "POS_LICENSE_DEFAULT_EDITION": "COMMUNITY",
@@ -57,7 +59,8 @@ def build_environment(request: SetupRequest) -> dict[str, str]:
 def generate_environment_file(request: SetupRequest, path: str | None = None) -> dict:
     request = request.validated()
     values = build_environment(request)
-    destination = Path(path or Path(request.installation_directory) / "config" / "carthage-pos.env")
+    config_dir = Path(request.configuration_directory) if request.configuration_directory else Path(request.installation_directory) / "config"
+    destination = Path(path or config_dir / "carthage-pos.env")
     write_environment_values(values, destination)
     return {"path": str(destination), "settings": values}
 

@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from app.core.runtime_paths import resource_path
+from app.dashboard.auth import CSRF_COOKIE, can_manage_inventory, csrf_token, dashboard_session
 from app.dashboard.services.dashboard_service import (
     get_dashboard_crm_summary,
     get_dashboard_customer_activity,
@@ -56,14 +57,18 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
 def render_template(request: Request, template_name: str, context: dict, **kwargs):
-    context = {"request": request, **context}
-    return templates.TemplateResponse(request, template_name, context, **kwargs)
+    token = csrf_token(request)
+    context = {"request": request, "csrf_token": token, **context}
+    response = templates.TemplateResponse(request, template_name, context, **kwargs)
+    if not request.cookies.get(CSRF_COOKIE):
+        response.set_cookie(CSRF_COOKIE, token, samesite="strict", secure=False)
+    return response
 
 
-def get_header():
+def get_header(session=None):
     return {
-        "user": "Administrator",
-        "store": "Main Store",
+        "user": session.full_name if session else "Dashboard Viewer",
+        "store": f"Store #{session.store_id}" if session else "All Stores",
     }
 
 
@@ -198,7 +203,10 @@ def dashboard_inventory(
     has_barcode: str = "all",
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
+    success: str = "",
+    error: str = "",
 ):
+    session = dashboard_session(request)
     result = list_dashboard_inventory(
         {
             "search": search,
@@ -211,7 +219,7 @@ def dashboard_inventory(
             "has_barcode": has_barcode,
             "page": page,
             "page_size": page_size,
-        }
+        }, session=session,
     )
     return render_template(
         request,
@@ -219,7 +227,7 @@ def dashboard_inventory(
         {
             "request": request,
             "title": "Inventory Workspace - Carthage Business Operating System",
-            "header": get_header(),
+            "header": get_header(session),
             "active_page": "inventory",
             "page_title": "Inventory Workspace",
             "page_subtitle": "Manage products, store stock, valuation, barcodes, and label readiness.",
@@ -229,13 +237,18 @@ def dashboard_inventory(
             "pagination": result["pagination"],
             "active_filters": ["active", "inactive", "all"],
             "barcode_filters": ["all", "has", "missing"],
+            "session": session,
+            "can_manage": can_manage_inventory(session),
+            "success": success,
+            "error": error,
         },
     )
 
 
 @router.get("/inventory/products/{product_id}", response_class=HTMLResponse)
 def dashboard_product_detail(request: Request, product_id: int):
-    detail = get_dashboard_product_detail(product_id)
+    session = dashboard_session(request)
+    detail = get_dashboard_product_detail(product_id, session=session)
     if not detail:
         return render_template(
             request,
@@ -243,7 +256,7 @@ def dashboard_product_detail(request: Request, product_id: int):
             {
                 "request": request,
                 "title": "Product Not Found - Carthage Business Operating System",
-                "header": get_header(),
+                "header": get_header(session),
                 "active_page": "inventory",
                 "detail": None,
                 "product_id": product_id,
@@ -256,10 +269,14 @@ def dashboard_product_detail(request: Request, product_id: int):
         {
             "request": request,
             "title": f"{detail['product']['name']} - Carthage Business Operating System",
-            "header": get_header(),
+            "header": get_header(session),
             "active_page": "inventory",
             "detail": detail,
             "product_id": product_id,
+            "session": session,
+            "can_manage": can_manage_inventory(session),
+            "success": request.query_params.get("success", ""),
+            "error": request.query_params.get("error", ""),
         },
     )
 

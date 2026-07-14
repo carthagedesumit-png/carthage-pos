@@ -11,9 +11,12 @@
 
     <div class="hero-status">
         <span class="status success">Inventory Control</span>
-        <span class="status success">Read Only</span>
+        {% if can_manage %}<a class="hero-link primary-action" href="/dashboard/inventory/products/new">Add Product</a>{% else %}<span class="status warning">Read Only</span><a class="hero-link" href="/dashboard/login">Sign In</a>{% endif %}
     </div>
 </section>
+{% if success %}<div class="alert success" role="status">{{ success }}</div>{% endif %}
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+<nav class="workspace-actions" aria-label="Inventory management"><a href="/dashboard/inventory/categories">Categories</a>{% if can_manage %}<a href="/dashboard/inventory/products/new">Add Product</a>{% endif %}</nav>
 
 <section class="cards">
     <div class="card accent-blue">
@@ -143,7 +146,7 @@
                     <td><strong>{{ product.inventory_value_display }}</strong></td>
                     <td><span class="badge badge-{{ product.active_status }}">{{ product.active_status.title() }}</span></td>
                     <td><span class="badge badge-{{ product.stock_status.replace(' ', '-') }}">{{ product.stock_status.title() }}</span></td>
-                    <td><a class="table-action" href="/dashboard/inventory/products/{{ product.product_id }}">View</a></td>
+                    <td><div class="row-actions"><a class="table-action" href="/dashboard/inventory/products/{{ product.product_id }}">View</a>{% if can_manage %}<a href="/dashboard/inventory/products/{{ product.product_id }}/edit">Edit</a><a href="/dashboard/inventory/products/{{ product.product_id }}/receive?store_id={{ product.store_id }}">Receive</a><a href="/dashboard/inventory/products/{{ product.product_id }}/adjust?store_id={{ product.store_id }}">Adjust</a><a href="/dashboard/inventory/products/{{ product.product_id }}/lifecycle?active={{ 'false' if product.is_active else 'true' }}&store_id={{ product.store_id }}">{{ 'Deactivate' if product.is_active else 'Reactivate' }}</a>{% endif %}</div></td>
                 </tr>
                 {% endfor %}
             </tbody>

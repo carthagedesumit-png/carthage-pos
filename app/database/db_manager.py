@@ -231,9 +231,17 @@ def migrate_categories_table(cursor):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
             description TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
     """)
+    columns = get_table_columns(cursor, "categories")
+    if "is_active" not in columns:
+        cursor.execute("ALTER TABLE categories ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+    if "updated_at" not in columns:
+        cursor.execute("ALTER TABLE categories ADD COLUMN updated_at DATETIME")
+        cursor.execute("UPDATE categories SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP)")
     cursor.execute("""
         INSERT OR IGNORE INTO categories (id, name, description)
         VALUES (1, 'General', 'Default migrated category')

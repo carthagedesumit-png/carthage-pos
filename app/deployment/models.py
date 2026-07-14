@@ -18,6 +18,7 @@ class SetupRequest:
     installation_directory: str
     database_path: str
     backup_directory: str
+    configuration_directory: str | None = None
     printer_preference: str = "none"
     currency: str = "USD"
     tax_rate: float = 0.0
@@ -45,6 +46,10 @@ class SetupRequest:
         install_dir = str(Path(_required(self.installation_directory, "Installation directory")).expanduser().resolve())
         database_path = str(Path(_required(self.database_path, "Database location")).expanduser().resolve())
         backup_dir = str(Path(_required(self.backup_directory, "Backup location")).expanduser().resolve())
+        config_dir = (
+            str(Path(self.configuration_directory).expanduser().resolve())
+            if self.configuration_directory else None
+        )
         if Path(database_path).suffix.lower() not in {".db", ".sqlite", ".sqlite3"}:
             raise InstallationError("Database location must use .db, .sqlite, or .sqlite3.")
         printer = str(self.printer_preference or "none").strip().lower()
@@ -82,7 +87,8 @@ class SetupRequest:
             self, business_name=business_name, store_name=store_name,
             administrator_username=username, administrator_full_name=full_name,
             installation_directory=install_dir, database_path=database_path,
-            backup_directory=backup_dir, printer_preference=printer,
+            backup_directory=backup_dir, configuration_directory=config_dir,
+            printer_preference=printer,
             currency=currency, tax_rate=tax_rate, timezone=timezone,
             api_host=_required(self.api_host, "API host"), log_level=log_level,
             deployment_type=deployment_type,

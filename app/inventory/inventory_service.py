@@ -140,8 +140,11 @@ def update_product(session, product_id, store_id=None, **updates):
     store_cost = changes.get("cost_price")
     try:
         with transaction() as conn:
-            if not conn.execute("SELECT 1 FROM products WHERE id = ?", (product_id,)).fetchone():
+            current = conn.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
+            if not current:
                 raise InventoryError("Product not found.")
+            if "barcode" in changes and changes["barcode"] == current["barcode"]:
+                changes.pop("barcode")
             if changes:
                 assignments = ", ".join(f"{field} = ?" for field in changes)
                 conn.execute(
