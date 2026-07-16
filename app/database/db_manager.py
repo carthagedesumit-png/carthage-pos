@@ -83,6 +83,7 @@ def initialize_database():
         migrate_customer_financial_tables(cursor)
         migrate_finance_tables(cursor)
         migrate_pilot_operations_tables(cursor)
+        migrate_executive_analytics_tables(cursor)
         migrate_pilot_operations_tables(cursor)
         migrate_inventory_compatibility(cursor)
         cursor.execute(f"PRAGMA user_version = {DATABASE_SCHEMA_VERSION}")
@@ -93,6 +94,21 @@ def migrate_pilot_operations_tables(cursor):
         CREATE TABLE IF NOT EXISTS user_dashboard_preferences (user_id INTEGER PRIMARY KEY, preferences TEXT NOT NULL DEFAULT '{}', updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id));
         CREATE TABLE IF NOT EXISTS maintenance_history (id INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL, status TEXT NOT NULL, details TEXT, user_id INTEGER NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id));
         CREATE TABLE IF NOT EXISTS recovery_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, status TEXT NOT NULL, details TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+    """)
+
+def migrate_executive_analytics_tables(cursor):
+    cursor.executescript("""
+        CREATE TABLE IF NOT EXISTS executive_report_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+            frequency TEXT NOT NULL CHECK(frequency IN ('DAILY','WEEKLY','MONTHLY','QUARTERLY')),
+            store_id INTEGER, format TEXT NOT NULL DEFAULT 'PDF', recipients TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1, created_by INTEGER NOT NULL,
+            last_run_at DATETIME, next_run_at DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(store_id) REFERENCES stores(id), FOREIGN KEY(created_by) REFERENCES users(id));
+        CREATE TABLE IF NOT EXISTS executive_analytics_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            store_id INTEGER, event_type TEXT NOT NULL, details TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id));
     """)
 
 def migrate_pilot_operations_tables(cursor):

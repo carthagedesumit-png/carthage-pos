@@ -21,6 +21,7 @@
 
         <nav class="sidebar-menu">
             <a class="{{ 'active' if active_page == 'dashboard' else '' }}" href="/dashboard/" {% if active_page == 'dashboard' %}aria-current="page"{% endif %}>Dashboard</a>
+            <a class="{{ 'active' if active_page == 'executive' else '' }}" href="/dashboard/executive" {% if active_page == 'executive' %}aria-current="page"{% endif %}>Executive</a>
             <a class="{{ 'active' if active_page == 'sales' else '' }}" href="/dashboard/sales" {% if active_page == 'sales' %}aria-current="page"{% endif %}>Sales</a>
             <a class="{{ 'active' if active_page == 'inventory' else '' }}" href="/dashboard/inventory" {% if active_page == 'inventory' %}aria-current="page"{% endif %}>Inventory</a>
             <a class="{{ 'active' if active_page == 'customers' else '' }}" href="/dashboard/customers" {% if active_page == 'customers' %}aria-current="page"{% endif %}>CRM</a>
