@@ -28,10 +28,22 @@ from app.deployment.windows_integration import (
 logger = get_logger("deployment.installer")
 DEFAULT_RUNTIME_DIRECTORY_NAME = "Carthage POS"
 
+def validate_installation_request(request: SetupRequest,minimum_free_bytes: int=100*1024*1024) -> dict:
+    """Run non-mutating preflight checks before installation begins."""
+    request=request.validated();paths=[Path(request.installation_directory),Path(request.database_path).parent,Path(request.backup_directory),Path(request.configuration_directory) if request.configuration_directory else Path(request.installation_directory)/'config'];checks=[]
+    for path in paths:
+        probe=path
+        while not probe.exists() and probe.parent!=probe:probe=probe.parent
+        usage=shutil.disk_usage(probe);writable=os.access(probe,os.W_OK)
+        checks.append({'path':str(path),'existing_parent':str(probe),'writable':writable,'free_bytes':usage.free,'sufficient_space':usage.free>=minimum_free_bytes})
+    program_data=Path(os.environ.get('PROGRAMDATA',paths[0].anchor or Path.home()))
+    if not all(x['writable'] and x['sufficient_space'] for x in checks):raise InstallationError('Installation preflight failed: verify directory permissions and available disk space.')
+    return {'valid':True,'checks':checks,'program_data':str(program_data),'configuration_valid':True}
+
 
 def fresh_install(request: SetupRequest) -> dict:
     """Perform first-run configuration and atomic database initialization."""
-    request = request.validated()
+    request = request.validated();preflight=validate_installation_request(request)
     install_dir = Path(request.installation_directory)
     config_dir = _configuration_dir(request, install_dir)
     state_path = _state_path(install_dir, config_dir)
@@ -51,6 +63,7 @@ def fresh_install(request: SetupRequest) -> dict:
         _write_json_atomic(windows_path, windows_manifest)
         state = _build_state(request, generated["settings"], config_path, windows_path, "FRESH")
         state["database"] = database
+        state["preflight"] = preflight
         _write_json_atomic(state_path, state)
     except Exception as exc:
         for path in created_files:

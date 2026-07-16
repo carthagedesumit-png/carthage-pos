@@ -82,9 +82,32 @@ def initialize_database():
         migrate_sales_returns_table(cursor)
         migrate_customer_financial_tables(cursor)
         migrate_finance_tables(cursor)
+        migrate_pilot_operations_tables(cursor)
+        migrate_pilot_operations_tables(cursor)
         migrate_inventory_compatibility(cursor)
         cursor.execute(f"PRAGMA user_version = {DATABASE_SCHEMA_VERSION}")
     print("Carthage POS Database Initialized Successfully.")
+
+def migrate_pilot_operations_tables(cursor):
+    cursor.executescript("""
+        CREATE TABLE IF NOT EXISTS user_dashboard_preferences (user_id INTEGER PRIMARY KEY, preferences TEXT NOT NULL DEFAULT '{}', updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id));
+        CREATE TABLE IF NOT EXISTS maintenance_history (id INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL, status TEXT NOT NULL, details TEXT, user_id INTEGER NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id));
+        CREATE TABLE IF NOT EXISTS recovery_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, status TEXT NOT NULL, details TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+    """)
+
+def migrate_pilot_operations_tables(cursor):
+    cursor.executescript("""
+        CREATE TABLE IF NOT EXISTS user_dashboard_preferences (
+            user_id INTEGER PRIMARY KEY, preferences TEXT NOT NULL DEFAULT '{}',
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id));
+        CREATE TABLE IF NOT EXISTS maintenance_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL,
+            status TEXT NOT NULL, details TEXT, user_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id));
+        CREATE TABLE IF NOT EXISTS recovery_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL,
+            status TEXT NOT NULL, details TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+    """)
 
 
 def migrate_finance_tables(cursor):

@@ -43,13 +43,20 @@ def run_packaged_server():
     """Run the installed API and dashboard without console interaction."""
     from app.api.app import create_app
 
-    config = get_config()
-    uvicorn.run(
-        create_app(initialize=False),
-        host=config.api.host,
-        port=config.api.port,
-        log_level=config.deployment.log_level.lower(),
-    )
+    from app.deployment.startup_service import release_instance,schedule_browser,startup_plan
+    config = get_config();runtime=os.environ.get('POS_RUNTIME_DIRECTORY') or Path(config.deployment.log_directory).parent
+    fallback=int(os.environ.get('POS_API_FALLBACK_PORT','0') or 0) or None
+    plan=startup_plan(config.api.host,config.api.port,fallback_port=fallback,runtime_directory=runtime)
+    browser=os.environ.get('POS_BROWSER_AUTO_LAUNCH','true').lower() in {'1','true','yes','on'}
+    delay=float(os.environ.get('POS_BROWSER_STARTUP_DELAY','1.5'));timeout=float(os.environ.get('POS_STARTUP_TIMEOUT','30'))
+    print(f"[STARTUP] CBOS endpoint: {plan['url']} (timeout {timeout:.0f}s)")
+    if not plan['start']:
+        schedule_browser(plan['url'],browser,0);return
+    schedule_browser(plan['url'],browser,delay)
+    try:uvicorn.run(create_app(initialize=False),host=config.api.host,port=plan['port'],log_level=config.deployment.log_level.lower())
+    except Exception as exc:
+        print(f"[CRITICAL] CBOS startup failed: {exc}",file=sys.stderr);raise
+    finally:release_instance(plan['lock_path'])
 
 
 def load_deployment_environment():

@@ -33,6 +33,7 @@ from app.dashboard.inventory_router import router as inventory_dashboard_router
 from app.dashboard.administration_router import router as administration_dashboard_router
 from app.dashboard.sales_router import router as sales_dashboard_router
 from app.dashboard.finance_router import router as finance_dashboard_router
+from app.dashboard.operations_router import router as operations_dashboard_router
 from app.dashboard.api.dashboard_api import router as dashboard_api_router
 
 
@@ -89,6 +90,7 @@ def create_app(*, initialize: bool = True) -> FastAPI:
     application.include_router(administration_dashboard_router)
     application.include_router(sales_dashboard_router)
     application.include_router(finance_dashboard_router)
+    application.include_router(operations_dashboard_router)
     application.include_router(dashboard_router)
     application.include_router(dashboard_api_router)
     application.include_router(core.router, prefix="/api/v1")
