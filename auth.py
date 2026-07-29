@@ -24,6 +24,12 @@ USER_MANAGEMENT_ROLES = {ROLE_ADMIN}
 
 logger = get_logger("authentication")
 
+CREDENTIAL_OK = "ok"
+CREDENTIAL_USER_NOT_FOUND = "user_not_found"
+CREDENTIAL_PASSWORD_MISMATCH = "bcrypt_mismatch"
+CREDENTIAL_INACTIVE = "inactive"
+CREDENTIAL_LOCKED = "locked"
+
 
 @dataclass(frozen=True)
 class UserSession:
@@ -229,24 +235,29 @@ def _insert_user(username, password, full_name, role, home_store_id=None):
     return get_user_by_id(user_id)
 
 
-def authenticate_user(username, password, store_id=None):
+def authenticate_user(username, password, store_id=None, *, report_account_state=False):
     username = normalize_username(username)
     with get_connection() as conn:
-        row = conn.execute(
-            """SELECT id, username, password_hash, full_name, role, is_active, home_store_id,
-                      COALESCE(is_locked, 0) AS is_locked
-               FROM users WHERE username = ?""",
-            (username,)
-        ).fetchone()
-        if not row or not row["is_active"] or row["is_locked"]:
+        status, row = _verify_credentials_in_connection(conn, username, password)
+        if status == CREDENTIAL_USER_NOT_FOUND:
             log_event(logger, "authentication_failed", username=username)
             return None
-        if not verify_password(password, row["password_hash"]):
+        if status == CREDENTIAL_PASSWORD_MISMATCH:
             conn.execute(
                 "UPDATE users SET failed_login_count = failed_login_count + 1 WHERE id = ?",
                 (row["id"],),
             )
             log_event(logger, "authentication_failed", username=username)
+            return None
+        if status == CREDENTIAL_INACTIVE:
+            log_event(logger, "authentication_failed", username=username, account_state="inactive")
+            if report_account_state:
+                raise AuthenticationError("This account is inactive. Contact an administrator.")
+            return None
+        if status == CREDENTIAL_LOCKED:
+            log_event(logger, "authentication_failed", username=username, account_state="locked")
+            if report_account_state:
+                raise AuthenticationError("This account is locked. Contact an administrator.")
             return None
         conn.execute(
             "UPDATE users SET last_login = CURRENT_TIMESTAMP, failed_login_count = 0 WHERE id = ?",
@@ -256,6 +267,25 @@ def authenticate_user(username, password, store_id=None):
         session = validate_session(session)
         log_event(logger, "authentication_succeeded", user_id=session.user_id, username=username)
         return session
+
+
+def _verify_credentials_in_connection(conn, username, password):
+    """Shared account-state and bcrypt decision used by login and upgrade preflight."""
+    row = conn.execute(
+        """SELECT id, username, password_hash, full_name, role, is_active, home_store_id,
+                  COALESCE(is_locked, 0) AS is_locked
+             FROM users WHERE username = ?""",
+        (normalize_username(username),),
+    ).fetchone()
+    if not row:
+        return CREDENTIAL_USER_NOT_FOUND, None
+    if not verify_password(password, row["password_hash"]):
+        return CREDENTIAL_PASSWORD_MISMATCH, row
+    if not row["is_active"]:
+        return CREDENTIAL_INACTIVE, row
+    if row["is_locked"]:
+        return CREDENTIAL_LOCKED, row
+    return CREDENTIAL_OK, row
 
 
 def change_password(user_id, new_password, acting_session=None):

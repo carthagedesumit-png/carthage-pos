@@ -38,6 +38,7 @@ $ReleaseDir = Join-Path (Join-Path $Root $ReleaseRoot) "CBOS-$Version"
 $VersionFile = Join-Path $BuildRoot "version_info.txt"
 $PyInstallerWork = Join-Path $BuildRoot "pyinstaller"
 $InstallerOutput = Join-Path $ReleaseDir "installer"
+$InstallerStage = Join-Path $BuildRoot "installer-output"
 
 if (Test-Path $BuildRoot) {
     Remove-Item -LiteralPath $BuildRoot -Recurse -Force
@@ -45,7 +46,7 @@ if (Test-Path $BuildRoot) {
 if (Test-Path $ReleaseDir) {
     Remove-Item -LiteralPath $ReleaseDir -Recurse -Force
 }
-New-Item -ItemType Directory -Force -Path $BuildRoot, $ReleaseDir, $InstallerOutput | Out-Null
+New-Item -ItemType Directory -Force -Path $BuildRoot, $ReleaseDir, $InstallerOutput, $InstallerStage | Out-Null
 
 Invoke-Native "Unit tests" $Python @("-m", "unittest", "discover", "-s", "tests", "-v")
 Invoke-Native "Whitespace validation" "git" @("diff", "--check")
@@ -56,6 +57,7 @@ $DashboardTemplates = (Resolve-Path "app\dashboard\templates").Path
 $DashboardStatic = (Resolve-Path "app\dashboard\static").Path
 $MainEntry = (Resolve-Path "main.py").Path
 $DeploymentEntry = (Resolve-Path "deployment_cli.py").Path
+$UpgradeVerifierEntry = (Resolve-Path "upgrade_verifier_cli.py").Path
 
 $Common = @(
     "--noconfirm", "--clean", "--onedir",
@@ -74,11 +76,18 @@ if (Test-Path $Icon) {
 
 Invoke-Native "CarthagePOS PyInstaller build" $Python (@("-m", "PyInstaller") + $Common + @("--name", "CarthagePOS", $MainEntry))
 Invoke-Native "CarthagePOSDeployment PyInstaller build" $Python (@("-m", "PyInstaller") + $Common + @("--name", "CarthagePOSDeployment", $DeploymentEntry))
+Invoke-Native "Upgrade verifier PyInstaller build" $Python @(
+    "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile",
+    "--version-file", $VersionFile, "--distpath", $ReleaseDir,
+    "--workpath", $PyInstallerWork, "--specpath", $BuildRoot,
+    "--name", "CarthagePOSUpgradeVerifier", $UpgradeVerifierEntry
+)
 
 $AppPayload = Join-Path $ReleaseDir "CarthagePOS"
 $DeploymentPayload = Join-Path $ReleaseDir "CarthagePOSDeployment"
 $AppExe = Join-Path $AppPayload "CarthagePOS.exe"
 $DeploymentExe = Join-Path $DeploymentPayload "CarthagePOSDeployment.exe"
+$UpgradeVerifierExe = Join-Path $ReleaseDir "CarthagePOSUpgradeVerifier.exe"
 $PackagedTemplates = Join-Path $AppPayload "_internal\app\dashboard\templates"
 $PackagedStatic = Join-Path $AppPayload "_internal\app\dashboard\static"
 
@@ -88,6 +97,12 @@ if (-not (Test-Path $AppExe)) {
 if (-not (Test-Path $DeploymentExe)) {
     throw "PyInstaller did not produce $DeploymentExe."
 }
+if (-not (Test-Path $UpgradeVerifierExe)) {
+    throw "PyInstaller did not produce $UpgradeVerifierExe."
+}
+Invoke-Native "Packaged upgrade verifier acceptance" $Python @(
+    "scripts\verify_packaged_upgrade.py", $UpgradeVerifierExe
+)
 if (-not (Test-Path $PackagedTemplates)) {
     throw "Packaged dashboard templates were not found: $PackagedTemplates"
 }
@@ -103,9 +118,23 @@ if (-not $SkipInstaller) {
     Invoke-Native "Inno Setup installer build" $InnoSetupCompiler @(
         "/DMyAppVersion=""$Version""",
         "/DMySourceRoot=""$ReleaseDir""",
-        "/DMyOutputDir=""$InstallerOutput""",
+        "/DMyOutputDir=""$InstallerStage""",
         "installer\carthage-pos.iss"
     )
+    $InstallerName = "CBOS-Setup-$Version.exe"
+    $StagedInstaller = Join-Path $InstallerStage $InstallerName
+    $FinalInstaller = Join-Path $InstallerOutput $InstallerName
+    if (-not (Test-Path -LiteralPath $StagedInstaller -PathType Leaf)) {
+        throw "Inno Setup did not produce $StagedInstaller."
+    }
+    if ((Get-Item -LiteralPath $StagedInstaller).Length -le 0) {
+        throw "Inno Setup produced an empty installer: $StagedInstaller."
+    }
+    Copy-Item -LiteralPath $StagedInstaller -Destination $FinalInstaller -Force
+    if (-not (Test-Path -LiteralPath $FinalInstaller -PathType Leaf) -or
+        (Get-Item -LiteralPath $FinalInstaller).Length -le 0) {
+        throw "Final RC installer is missing or empty: $FinalInstaller."
+    }
     $InstallerBuilt = $true
 }
 

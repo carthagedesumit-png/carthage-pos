@@ -1,6 +1,6 @@
 """Thin server-rendered routes for inventory management."""
 
-from urllib.parse import parse_qs, quote
+from urllib.parse import parse_qs, quote, urlsplit
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -10,6 +10,7 @@ from app.api.session_service import issue_session, revoke_session, resolve_sessi
 from app.administration.user_service import change_own_password
 from app.database.db_manager import get_connection
 from app.core.exceptions import ApplicationError, AuthenticationError, AuthorizationError
+from app.core.config import get_config
 from app.core.runtime_paths import resource_path
 from app.dashboard.auth import (
     CSRF_COOKIE, SESSION_COOKIE, can_manage_inventory, csrf_token, dashboard_session,
@@ -65,23 +66,26 @@ def _require(request):
 
 
 @router.get("/login", response_class=HTMLResponse)
-def login_page(request: Request, error: str = ""):
-    return _render(request, "dashboard_login.html", {"error": error, "title": "Dashboard Sign In"})
+def login_page(request: Request, error: str = "", next: str = ""):
+    return _render(request, "dashboard_login.html", {"error": error, "next": _safe_next(next), "title": "Dashboard Sign In"})
 
 
 @router.post("/login")
-async def login(request: Request):
+async def login(request: Request, next: str = ""):
     values = await _form(request)
     try:
         result = issue_session(values.get("username", ""), values.get("password", ""),
                                int(values["store_id"]) if values.get("store_id") else None)
     except (ApplicationError, ValueError) as exc:
-        return _redirect("/dashboard/login", error=str(exc))
+        target = "/dashboard/login" + (f"?next={quote(_safe_next(next), safe='')}" if _safe_next(next) else "")
+        return _redirect(target, error=str(exc))
     with get_connection() as conn:
         force_change = bool(conn.execute("SELECT force_password_change FROM users WHERE id=?", (result["session"]["user_id"],)).fetchone()[0])
-    response = _redirect("/dashboard/change-password" if force_change else "/dashboard/inventory", message="Signed in successfully.")
+    response = _redirect("/dashboard/change-password" if force_change else (_safe_next(next) or "/dashboard/inventory"), message="Signed in successfully.")
+    config = get_config()
     response.set_cookie(SESSION_COOKIE, result["access_token"], httponly=True,
-                        samesite="strict", secure=False, max_age=8 * 60 * 60)
+                        samesite=config.security.cookie_same_site, secure=config.security.secure_cookies,
+                        path="/dashboard", max_age=config.api.session_hours * 60 * 60)
     return response
 
 
@@ -94,8 +98,16 @@ def logout(request: Request):
         except AuthenticationError:
             pass
     response = _redirect("/dashboard/login", message="Signed out.")
-    response.delete_cookie(SESSION_COOKIE)
+    response.delete_cookie(SESSION_COOKIE, path="/dashboard")
     return response
+
+
+def _safe_next(value):
+    value = str(value or "")
+    parsed = urlsplit(value)
+    if parsed.scheme or parsed.netloc or not value.startswith("/dashboard") or value.startswith("//"):
+        return ""
+    return value
 
 @router.get("/change-password", response_class=HTMLResponse)
 def change_password_page(request: Request):

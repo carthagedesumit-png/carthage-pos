@@ -36,6 +36,9 @@ def build_environment(request: SetupRequest) -> dict[str, str]:
         "POS_API_HOST": request.api_host,
         "POS_API_PORT": str(request.api_port),
         "POS_API_SESSION_HOURS": "12",
+        # The installed desktop server currently exposes HTTP on a loopback host.
+        # Secure must become true only when an HTTPS endpoint is configured.
+        "POS_SECURE_COOKIES": "false",
         "POS_LOG_LEVEL": request.log_level,
         "POS_LOG_DIRECTORY": str(runtime_dir / "logs"),
         "POS_SEED_SAMPLE_DATA": "false",

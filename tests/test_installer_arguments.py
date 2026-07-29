@@ -1,6 +1,8 @@
 import io
 import tempfile
 import unittest
+import subprocess
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -78,11 +80,57 @@ class SilentInstallerArgumentsTestCase(unittest.TestCase):
     def test_password_file_is_consumed_and_deleted(self):
         from deployment_cli import _consume_password_file
 
-        with tempfile.TemporaryDirectory() as root:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root:
             password_file = Path(root) / "password input.txt"
             password_file.write_text(self.password, encoding="utf-8")
             self.assertEqual(_consume_password_file(password_file), self.password)
             self.assertFalse(password_file.exists())
+
+    def test_inno_code_password_file_contract_is_consumed_exactly(self):
+        compiler = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Inno Setup 6" / "ISCC.exe"
+        if not compiler.is_file():
+            self.skipTest("Inno Setup compiler is unavailable")
+        harness = Path("installer/password-contract-harness.iss").resolve()
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root) / "compiled"
+            output.mkdir()
+            subprocess.run(
+                [str(compiler), f"/O{output}", str(harness)],
+                check=True, capture_output=True, text=True,
+            )
+            executable = output / "CBOS-Password-Contract-Harness.exe"
+            password_file = Path(root) / "contract.input"
+            subprocess.run(
+                [str(executable), "/VERYSILENT", f"/ContractOutput={password_file}"],
+                check=False, capture_output=True, text=True,
+            )
+            raw = password_file.read_bytes()
+            self.assertEqual(len(raw), len("Harness-Only 42!".encode("utf-8")))
+            self.assertFalse(raw.startswith(b"\xef\xbb\xbf"))
+            self.assertNotIn(b"\x00", raw)
+            self.assertFalse(raw.endswith((b"\r", b"\n")))
+            from deployment_cli import _consume_password_file
+            self.assertEqual(_consume_password_file(password_file), "Harness-Only 42!")
+            self.assertFalse(password_file.exists())
+
+    def test_upgrade_credentials_are_verified_before_files_are_replaced(self):
+        script = Path("installer/carthage-pos.iss").read_text(encoding="utf-8")
+        preflight = script[script.index("function PrepareToInstall"):script.index("procedure CurStepChanged")]
+        self.assertIn("ExtractTemporaryFile('CarthagePOSUpgradeVerifier.exe')", preflight)
+        self.assertIn("'verify-upgrade-credentials'", preflight)
+        self.assertIn("AdminPage.Values[1]", preflight)
+        self.assertIn("SetupValue(AdminPage, 0, 'CBOSAdminUser')", preflight)
+        self.assertIn("RuntimeRoot() + '\\config\\deployment.json'", preflight)
+        self.assertIn("No application files were replaced", preflight)
+        self.assertIn("ResultCode = 17", preflight)
+        self.assertIn("verifier could not load its runtime", preflight)
+
+    def test_upgrade_ui_requests_existing_credentials_explicitly(self):
+        script = Path("installer/carthage-pos.iss").read_text(encoding="utf-8")
+        self.assertIn("Existing administrator username:", script)
+        self.assertIn("Current existing administrator password:", script)
+        self.assertIn("New administrator username:", script)
+        self.assertNotIn("Confirm administrator password", script)
 
     def test_interactive_install_command_remains_available(self):
         from deployment_cli import main
@@ -96,7 +144,7 @@ class SilentInstallerArgumentsTestCase(unittest.TestCase):
 
     def test_inno_uses_visible_checked_exec_and_no_password_command_argument(self):
         script = Path("installer/carthage-pos.iss").read_text(encoding="utf-8")
-        deployment = script[script.index("procedure RunDeploymentConfiguration;"):]
+        deployment = script[script.index("procedure RunDeploymentConfiguration;"):script.index("function PrepareToInstall")]
         self.assertIn("SW_SHOW, ewWaitUntilTerminated", deployment)
         self.assertIn("--admin-password-file", deployment)
         self.assertNotIn(" --admin-password ", deployment)
@@ -105,6 +153,20 @@ class SilentInstallerArgumentsTestCase(unittest.TestCase):
         self.assertNotIn("{param:CBOSAdminPassword|", script)
         self.assertNotIn("SetupWizard", script)
         self.assertNotIn("SW_HIDE", deployment)
+
+    def test_deployment_is_synchronous_and_postinstall_launch_is_non_blocking(self):
+        script = Path("installer/carthage-pos.iss").read_text(encoding="utf-8")
+        deployment = script[script.index("procedure RunDeploymentConfiguration;"):script.index("procedure CurStepChanged")]
+        self.assertIn("ewWaitUntilTerminated", deployment)
+        self.assertIn("if ResultCode <> 0", deployment)
+        self.assertNotIn("CarthagePOS.exe", deployment)
+        run_section = script[script.index("[Run]"):script.index("[Code]")]
+        self.assertIn('Description: "Launch CBOS"', run_section)
+        self.assertIn("postinstall nowait skipifsilent", run_section)
+        post_install = script[script.index("procedure CurStepChanged"):]
+        self.assertIn("RunDeploymentConfiguration();", post_install)
+        self.assertNotIn("ewNoWait", post_install)
+        self.assertNotIn("Exec(ExpandConstant('{app}\\{#MyAppExeName}')", post_install)
 
 
 if __name__ == "__main__":

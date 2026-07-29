@@ -86,7 +86,44 @@ class RcBuildAcceptanceTestCase(unittest.TestCase):
         self.assertNotIn(APP_VERSION, static_version_file)
         self.assertIn("MyAppVersion", installer_script)
 
+    def test_required_final_installer_rejects_missing_and_empty_artifacts(self):
+        from scripts.validate_release import generate_release_evidence, validate_release_artifacts
+
+        release_dir = self._release_payload()
+        generate_release_evidence(release_dir, require_executables=True)
+        missing = validate_release_artifacts(release_dir, require_executables=True, require_installer=True)
+        self.assertFalse(missing["valid"])
+        installer = release_dir / "installer" / "CBOS-Setup-1.0.0-rc.1.exe"
+        installer.parent.mkdir(); installer.write_bytes(b"")
+        generate_release_evidence(release_dir, require_executables=True)
+        empty = validate_release_artifacts(release_dir, require_executables=True, require_installer=True)
+        self.assertFalse(empty["valid"])
+
+    def test_rc_packaging_retains_nonempty_installer_in_final_directory(self):
+        from scripts.validate_release import generate_release_evidence, validate_release_artifacts
+
+        release_dir = self._release_payload()
+        installer = release_dir / "installer" / "CBOS-Setup-1.0.0-rc.1.exe"
+        installer.parent.mkdir(); installer.write_bytes(b"signed-installer")
+        generate_release_evidence(release_dir, require_executables=True, require_installer=True)
+        result = validate_release_artifacts(release_dir, require_executables=True, require_installer=True)
+        self.assertTrue(result["valid"], result)
+        self.assertGreater(installer.stat().st_size, 0)
+        build_script = Path("scripts/build_rc.ps1").read_text(encoding="utf-8")
+        self.assertLess(build_script.index("Copy-Item -LiteralPath $StagedInstaller"),
+                        build_script.index('"scripts\\validate_release.py", "evidence"'))
+
+    def _release_payload(self):
+        release_dir = self.root / "CBOS-1.0.0-rc.1"
+        (release_dir / "CarthagePOS" / "_internal" / "app" / "dashboard" / "templates").mkdir(parents=True)
+        (release_dir / "CarthagePOS" / "_internal" / "app" / "dashboard" / "static").mkdir(parents=True)
+        (release_dir / "CarthagePOSDeployment").mkdir(parents=True)
+        (release_dir / "CarthagePOS" / "CarthagePOS.exe").write_bytes(b"app")
+        (release_dir / "CarthagePOSDeployment" / "CarthagePOSDeployment.exe").write_bytes(b"deployment")
+        (release_dir / "CarthagePOS" / "_internal" / "app" / "dashboard" / "templates" / "index.html").write_text("ok")
+        (release_dir / "CarthagePOS" / "_internal" / "app" / "dashboard" / "static" / "dashboard.css").write_text("ok")
+        return release_dir
+
 
 if __name__ == "__main__":
     unittest.main()
-

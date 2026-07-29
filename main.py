@@ -2,12 +2,23 @@ import os
 import sys
 from pathlib import Path
 
-import uvicorn
-
-from app.database.db_manager import initialize_database, seed_initial_data
-from app.ui.terminal_ui import run_pos_terminal
 from app.core.config import get_config, load_environment_file
-from auth import AuthenticationSystem
+
+
+def initialize_database():
+    from app.database.db_manager import initialize_database as initialize
+    return initialize()
+
+
+def seed_initial_data():
+    from app.database.db_manager import seed_initial_data as seed
+    return seed()
+
+
+class AuthenticationSystem:
+    """Patch-compatible placeholder; the real class is imported after configuration."""
+    def login(self):
+        raise RuntimeError("Authentication is not loaded until startup configuration is ready.")
 
 
 def bootstrap():
@@ -22,6 +33,7 @@ def bootstrap():
             except Exception:
                 pass
         raise SystemExit(1) from exc
+    # Deployment configuration must own process state before database/auth imports.
     initialize_database()
     if get_config().deployment.seed_sample_data:
         seed_initial_data()
@@ -30,7 +42,9 @@ def bootstrap():
         run_packaged_server()
         return
 
-    auth = AuthenticationSystem()
+    from auth import AuthenticationSystem as ConfiguredAuthenticationSystem
+    from app.ui.terminal_ui import run_pos_terminal
+    auth = ConfiguredAuthenticationSystem()
     if auth.login():
         print("Booting Carthage Systems POS Terminal Engine...")
         print("\n--- System Status: Online & Secure ---")
@@ -42,6 +56,7 @@ def bootstrap():
 def run_packaged_server():
     """Run the installed API and dashboard without console interaction."""
     from app.api.app import create_app
+    import uvicorn
 
     from app.deployment.startup_service import release_instance,schedule_browser,startup_plan
     config = get_config();runtime=os.environ.get('POS_RUNTIME_DIRECTORY') or Path(config.deployment.log_directory).parent

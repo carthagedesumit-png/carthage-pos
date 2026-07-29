@@ -179,7 +179,14 @@ def validate_release_artifacts(
             }
         )
     if require_installer:
-        checks.append({"name": "installer_exists", "passed": any(name.endswith(".exe") and "Setup" in name for name in names)})
+        installers = [
+            item for item in inventory
+            if item["name"].endswith(".exe") and "Setup" in item["name"]
+        ]
+        checks.append({
+            "name": "installer_exists",
+            "passed": any((root / item["path"]).is_file() and item.get("size", 0) > 0 for item in installers),
+        })
     checksum_result = validate_checksums(root)
     checks.append({"name": "checksums_valid", "passed": checksum_result["valid"]})
     return {

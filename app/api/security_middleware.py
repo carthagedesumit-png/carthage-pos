@@ -5,7 +5,7 @@ from time import monotonic
 from uuid import uuid4
 
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.core.config import get_config
 from app.core.logging_utils import get_logger, log_event, set_request_id
@@ -13,6 +13,20 @@ from app.core.logging_utils import get_logger, log_event, set_request_id
 
 logger = get_logger("api.security")
 _auth_attempts: dict[str, deque[float]] = defaultdict(deque)
+
+
+async def canonical_local_host_middleware(request: Request, call_next):
+    """Keep installed browser sessions on the configured loopback host."""
+    config = get_config()
+    hostname = (request.url.hostname or "").lower()
+    if config.api.host == "127.0.0.1" and hostname == "localhost":
+        port = request.url.port or config.api.port
+        target = f"{request.url.scheme}://127.0.0.1:{port}{request.url.path}"
+        query = request.scope.get("query_string", b"").decode("latin-1")
+        if query:
+            target += "?" + query
+        return RedirectResponse(target, status_code=307)
+    return await call_next(request)
 
 
 async def request_id_middleware(request: Request, call_next):

@@ -12,6 +12,7 @@ from app.api.licensing_middleware import enforce_api_license
 from app.api.schemas import ErrorResponse
 from app.api.security_middleware import (
     auth_rate_limit_middleware,
+    canonical_local_host_middleware,
     csrf_middleware,
     request_id_middleware,
     reset_rate_limit_state,
@@ -78,6 +79,7 @@ def create_app(*, initialize: bool = True) -> FastAPI:
         },
     )
     install_exception_handlers(application)
+    application.middleware("http")(canonical_local_host_middleware)
     application.middleware("http")(security_headers_middleware)
     application.middleware("http")(csrf_middleware)
     application.middleware("http")(auth_rate_limit_middleware)

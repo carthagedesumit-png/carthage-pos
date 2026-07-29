@@ -4,7 +4,8 @@ from sqlite3 import IntegrityError
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from urllib.parse import quote
 from fastapi.templating import Jinja2Templates
 
 from app.core.exceptions import (
@@ -23,10 +24,17 @@ dashboard_templates = Jinja2Templates(directory="app/dashboard/templates")
 def install_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthenticationError)
     async def authentication_error(_request: Request, exc: AuthenticationError):
+        if _is_dashboard_page(_request):
+            next_path = _request.url.path
+            if _request.url.query:
+                next_path += "?" + _request.url.query
+            return RedirectResponse(f"/dashboard/login?next={quote(next_path, safe='')}", status_code=303)
         return _error(401, "authentication_error", str(exc))
 
     @app.exception_handler(AuthorizationError)
     async def authorization_error(_request: Request, exc: AuthorizationError):
+        if _is_dashboard_page(_request):
+            return _dashboard_error(_request, 403, "Access denied", str(exc))
         return _error(403, "authorization_error", str(exc))
 
     @app.exception_handler(RequestValidationError)

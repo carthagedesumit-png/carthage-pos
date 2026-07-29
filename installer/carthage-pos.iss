@@ -40,6 +40,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 [Files]
 Source: "{#MySourceRoot}\CarthagePOS\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#MySourceRoot}\CarthagePOSDeployment\*"; DestDir: "{app}\deployment"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MySourceRoot}\CarthagePOSUpgradeVerifier.exe"; Flags: dontcopy
 Source: "assets\carthage-pos.ico"; DestDir: "{app}\assets"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
@@ -50,7 +51,11 @@ Name: "{autodesktop}\Carthage Business Operating System"; Filename: "{app}\{#MyA
 [UninstallRun]
 Filename: "{app}\deployment\CarthagePOSDeployment.exe"; Parameters: "uninstall --install-dir ""{app}"""; Flags: runhidden waituntilterminated; RunOnceId: "CarthagePOSRuntimeCleanup"
 
+[Run]
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch CBOS"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent; Check: ShouldOfferLaunch
+
 [Code]
+#include "password_file_contract.iss"
 var
   BusinessPage: TInputQueryWizardPage;
   AdminPage: TInputQueryWizardPage;
@@ -158,8 +163,13 @@ begin
     'Create the first administrator account.',
     'Choose a strong password. The password is used only to initialize the database and is not written to configuration files.'
   );
-  AdminPage.Add('Administrator username:', False);
-  AdminPage.Add('Administrator password:', True);
+  if FileExists(RuntimeRoot() + '\config\deployment.json') then begin
+    AdminPage.Add('Existing administrator username:', False);
+    AdminPage.Add('Current existing administrator password:', True);
+  end else begin
+    AdminPage.Add('New administrator username:', False);
+    AdminPage.Add('New administrator password:', True);
+  end;
   AdminPage.Add('Administrator full name:', False);
   AdminPage.Values[0] := 'admin';
   if Trim(ExpandConstant('{param:CBOSAdminUser|}')) <> '' then begin
@@ -237,10 +247,9 @@ begin
   ForceDirectories(Runtime + '\backups');
 
   PasswordFile := ExpandConstant('{tmp}\cbos-admin-password.input');
-  if not SaveStringToFile(
+  if not WriteAdminPasswordFile(
     PasswordFile,
-    AdminPage.Values[1],
-    False
+    AdminPage.Values[1]
   ) then begin
     RaiseException('CBOS could not create its temporary administrator password input.');
   end;
@@ -275,15 +284,71 @@ begin
   end;
 end;
 
-procedure CurStepChanged(CurStep: TSetupStep);
+function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
+  PasswordFile: String;
+  Arguments: String;
+  Verifier: String;
+begin
+  Result := '';
+  { Verify preserved credentials before [Files] replaces any installed binary. }
+  if not FileExists(RuntimeRoot() + '\config\deployment.json') then begin
+    exit;
+  end;
+  PasswordFile := ExpandConstant('{tmp}\cbos-upgrade-password.input');
+  try
+    if not WriteAdminPasswordFile(PasswordFile, AdminPage.Values[1]) then begin
+      Result := 'CBOS could not create its temporary upgrade credential input.';
+      exit;
+    end;
+    ExtractTemporaryFile('CarthagePOSUpgradeVerifier.exe');
+    Verifier := ExpandConstant('{tmp}\CarthagePOSUpgradeVerifier.exe');
+    Arguments :=
+      'verify-upgrade-credentials' +
+      ' --install-dir ' + QuoteArg(ExpandConstant('{app}')) +
+      ' --username ' + QuoteArg(SetupValue(AdminPage, 0, 'CBOSAdminUser')) +
+      ' --password-file ' + QuoteArg(PasswordFile);
+    if not Exec(Verifier, Arguments, ExpandConstant('{tmp}'), SW_HIDE,
+                ewWaitUntilTerminated, ResultCode) then begin
+      Result := 'CBOS upgrade credential verification could not be started.';
+    end else if ResultCode = 10 then begin
+      Result := 'Existing administrator username is missing. No application files were replaced.';
+    end else if ResultCode = 11 then begin
+      Result := 'Current administrator password input is missing or invalid. No application files were replaced.';
+    end else if ResultCode = 12 then begin
+      Result := 'Installed ProgramData configuration was not found. No application files were replaced.';
+    end else if ResultCode = 13 then begin
+      Result := 'The configured installed database was not found. No application files were replaced.';
+    end else if ResultCode = 14 then begin
+      Result := 'The existing administrator username was not found. No application files were replaced.';
+    end else if ResultCode = 15 then begin
+      Result := 'The existing administrator account is inactive. No application files were replaced.';
+    end else if ResultCode = 16 then begin
+      Result := 'The existing administrator account is locked. No application files were replaced.';
+    end else if ResultCode = 17 then begin
+      Result := 'The current existing administrator password did not match. No application files were replaced.';
+    end else if ResultCode = 18 then begin
+      Result := 'The supplied account is not an administrator. No application files were replaced.';
+    end else if ResultCode <> 0 then begin
+      Result := 'The extracted upgrade verifier could not load its runtime. No application files were replaced.';
+    end;
+  finally
+    DeleteFile(PasswordFile);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then begin
     RunDeploymentConfiguration();
-    if not WizardSilent() then begin
-      Exec(ExpandConstant('{app}\{#MyAppExeName}'), '', ExpandConstant('{app}'), SW_SHOWNORMAL,
-           ewNoWait, ResultCode);
-    end;
+  end;
+end;
+
+function ShouldOfferLaunch(): Boolean;
+begin
+  Result := False;
+  if not WizardSilent() then begin
+    Result := True;
   end;
 end;

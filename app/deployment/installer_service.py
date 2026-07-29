@@ -9,7 +9,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from auth import bootstrap_admin
+from auth import (
+    CREDENTIAL_OK, ROLE_ADMIN, _verify_credentials_in_connection,
+    bootstrap_admin, normalize_username, verify_password,
+)
 from app.core.config import parse_environment_file, reset_config_cache
 from app.core.exceptions import InstallationError
 from app.core.logging_utils import get_logger, log_event, log_failure
@@ -212,6 +215,41 @@ def get_deployment_state(installation_directory: str) -> dict:
     return {"installed": True, **_read_json(path)}
 
 
+def verify_installed_administrator(installation_directory, username, password):
+    """Verify current credentials before upgrade without changing login state."""
+    install_dir = Path(installation_directory).expanduser().resolve()
+    result = classify_upgrade_credentials(install_dir, username, password)
+    if result["status"] != CREDENTIAL_OK:
+        raise InstallationError(
+            "Existing installation credentials were not accepted. The existing administrator password is preserved; use the elevated reset-admin-password command if recovery is required."
+        )
+    return {"verified": True, "username": normalize_username(username)}
+
+
+def classify_upgrade_credentials(installation_directory, username, password):
+    """Return a secret-safe, read-only preflight classification."""
+    install_dir = Path(installation_directory).expanduser().resolve()
+    if not str(username or "").strip():
+        return {"status": "username_missing"}
+    if not password:
+        return {"status": "password_missing"}
+    _state, environment = _load_installation(install_dir)
+    database_path = Path(environment.get("CARTHAGE_POS_DB", ""))
+    if not database_path.is_file():
+        return {"status": "database_missing", "database_path": str(database_path)}
+    with _temporary_environment(environment):
+        with get_connection() as conn:
+            status, row = _verify_credentials_in_connection(conn, username, password)
+    if status == CREDENTIAL_OK and row["role"] != ROLE_ADMIN:
+        status = "not_administrator"
+    stat = database_path.stat()
+    return {
+        "status": status,
+        "database_path": str(database_path.resolve()),
+        "database_identity": f"{stat.st_dev}:{stat.st_ino}",
+    }
+
+
 def _initialize_fresh_database(request: SetupRequest, environment: dict[str, str]) -> dict:
     destination = Path(request.database_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -226,6 +264,7 @@ def _initialize_fresh_database(request: SetupRequest, environment: dict[str, str
                 request.administrator_username, request.administrator_password,
                 request.administrator_full_name,
             )
+            _verify_created_administrator(request.administrator_username, request.administrator_password)
             _assert_database_integrity(temporary)
         os.replace(temporary, destination)
     except Exception:
@@ -233,7 +272,21 @@ def _initialize_fresh_database(request: SetupRequest, environment: dict[str, str
         Path(f"{temporary}-journal").unlink(missing_ok=True)
         raise
     return {"path": str(destination), "schema_version": _database_version(destination),
-            "integrity": "ok"}
+            "integrity": "ok", "administrator_verified": True}
+
+
+def _verify_created_administrator(username, password):
+    """Fail installation unless the persisted administrator can authenticate safely."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT username,password_hash,role,is_active FROM users WHERE username=?",
+            (normalize_username(username),),
+        ).fetchone()
+    if (not row or not row["is_active"] or row["role"] != ROLE_ADMIN
+            or not str(row["password_hash"]).startswith("$2")
+            or not verify_password(password, row["password_hash"])):
+        raise InstallationError("Administrator credential verification failed.")
+    return True
 
 
 def _build_state(request, environment, config_path, windows_path, operation):

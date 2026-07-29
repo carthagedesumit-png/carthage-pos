@@ -1,6 +1,7 @@
 """Command-line entry point packaged as the Windows deployment executable."""
 
 import argparse
+import getpass
 import json
 import os
 import sys
@@ -47,6 +48,16 @@ def main(argv=None):
     uninstall.add_argument("--install-dir", required=True)
     uninstall.add_argument("--remove-data", action="store_true")
     uninstall.add_argument("--confirmation")
+    reset_password = subparsers.add_parser("reset-admin-password", help="Securely reset a local administrator password")
+    reset_password.add_argument("--install-dir", required=True)
+    reset_password.add_argument("--username", required=True)
+    reset_password.add_argument("--password-file")
+    verify_admin = subparsers.add_parser(
+        "verify-admin", help="Verify an installed administrator without changing deployment state"
+    )
+    verify_admin.add_argument("--install-dir", required=True)
+    verify_admin.add_argument("--username", required=True)
+    verify_admin.add_argument("--password-file", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "install":
@@ -57,6 +68,13 @@ def main(argv=None):
         elif args.command == "configure":
             state_path = _deployment_state_path(args)
             if state_path.is_file():
+                from app.deployment.installer_service import verify_installed_administrator
+                password = (_consume_password_file(args.administrator_password_file)
+                            if getattr(args, "administrator_password_file", None)
+                            else getattr(args, "administrator_password", None))
+                if not password:
+                    raise InstallationError("Existing installation verification requires the current administrator password.")
+                verify_installed_administrator(args.install_dir, args.administrator_username, password)
                 result = upgrade_installation(args.install_dir)
             else:
                 request = _setup_request_from_args(args)
@@ -67,6 +85,15 @@ def main(argv=None):
             result = repair_installation(args.install_dir)
         elif args.command == "verify":
             result = verify_installation(args.install_dir)
+        elif args.command == "reset-admin-password":
+            from app.deployment.password_recovery_service import reset_local_admin_password
+            password = _consume_password_file(args.password_file) if args.password_file else _prompt_new_password()
+            result = reset_local_admin_password(args.install_dir, args.username, password)
+        elif args.command == "verify-admin":
+            from app.deployment.installer_service import verify_installed_administrator
+            result = verify_installed_administrator(
+                args.install_dir, args.username, _consume_password_file(args.password_file)
+            )
         else:
             result = uninstall_installation(
                 args.install_dir, remove_data=args.remove_data, confirmation=args.confirmation
@@ -141,16 +168,28 @@ def _setup_request_from_args(args):
 def _consume_password_file(path):
     password_path = Path(path)
     try:
-        password = password_path.read_text(encoding="utf-8")
-    except OSError as exc:
+        raw = password_path.read_bytes()
+        password = raw.decode("utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
         raise InstallationError("Administrator password input could not be read.") from exc
     finally:
         try:
             password_path.unlink(missing_ok=True)
         except OSError:
             pass
-    if not password.strip():
+    password = password.rstrip("\r\n")
+    if "\x00" in password:
+        raise InstallationError("Administrator password input contains invalid characters.")
+    if not password:
         raise InstallationError("Administrator password input is empty.")
+    return password
+
+
+def _prompt_new_password():
+    password = getpass.getpass("New administrator password: ")
+    confirmation = getpass.getpass("Confirm administrator password: ")
+    if password != confirmation:
+        raise InstallationError("Administrator password confirmation does not match.")
     return password
 
 

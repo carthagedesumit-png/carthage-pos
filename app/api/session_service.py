@@ -26,7 +26,7 @@ logger = get_logger("api.authentication")
 
 
 def issue_session(username: str, password: str, store_id: Optional[int] = None) -> dict:
-    session = authenticate_user(username, password, store_id=store_id)
+    session = authenticate_user(username, password, store_id=store_id, report_account_state=True)
     if session is None:
         raise AuthenticationError("Invalid username or password.")
     token = secrets.token_urlsafe(32)

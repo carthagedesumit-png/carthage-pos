@@ -20,7 +20,7 @@ def dashboard_session(request: Request, required=False):
         token = authorization[7:].strip()
     if not token:
         if required:
-            raise AuthenticationError("Please sign in to manage inventory.")
+            raise AuthenticationError("Please sign in to access CBOS.")
         return None
     try:
         session = resolve_session(token)

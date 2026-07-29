@@ -22,6 +22,12 @@ class PilotReadinessTestCase(unittest.TestCase):
    self.assertEqual(choose_port('127.0.0.1',busy,fallback),fallback)
   lock=self.root/'instance.json';first=acquire_instance(lock,'http://127.0.0.1:65530');self.assertTrue(first['acquired']);release_instance(lock)
   opened=[];timer=schedule_browser('http://127.0.0.1:8000',True,0,opened.append);timer.join(1);self.assertEqual(opened,['http://127.0.0.1:8000/dashboard/'])
+ def test_healthy_existing_instance_reuses_server_and_canonical_browser_once(self):
+  from unittest.mock import patch
+  from app.deployment.startup_service import startup_plan,schedule_browser
+  with patch('app.deployment.startup_service.is_running',return_value=True),patch('app.deployment.startup_service.choose_port') as choose:
+   plan=startup_plan('localhost',8000,runtime_directory=self.root);self.assertFalse(plan['start']);self.assertTrue(plan['already_running']);self.assertEqual(plan['url'],'http://127.0.0.1:8000');choose.assert_not_called()
+  opened=[];timer=schedule_browser(plan['url'],True,0,opened.append);timer.join(1);self.assertEqual(opened,['http://127.0.0.1:8000/dashboard/'])
  def test_resumable_onboarding_and_installer_preflight(self):
   from app.deployment.onboarding_service import save_onboarding,onboarding_summary
   state=self.root/'onboarding.json';save_onboarding(state,'company',{'business_name':'Pilot Co'});resumed=onboarding_summary(state);self.assertEqual(resumed['current_step'],'store');self.assertGreater(resumed['progress'],0)

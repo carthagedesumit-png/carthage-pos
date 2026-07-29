@@ -10,7 +10,7 @@ def port_available(host,port):
     with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as sock:
         try:sock.bind((host,int(port)));return True
         except OSError:return False
-def instance_url(host,port):return f"http://{'127.0.0.1' if host in {'0.0.0.0','::'} else host}:{int(port)}"
+def instance_url(host,port):return f"http://{'127.0.0.1' if str(host).lower() in {'0.0.0.0','::','localhost'} else host}:{int(port)}"
 def is_running(url,timeout=1.0):
     try:
         with urllib.request.urlopen(url+'/health/live',timeout=timeout) as response:return response.status==200
