@@ -78,6 +78,11 @@ Only the first administrator can be created through the bootstrap environment va
 python -m unittest discover -s tests
 ```
 
+Pull requests targeting `main` or `feature/reporting-engine` automatically run
+the complete test suite and source-only release validation on Windows with
+Python 3.14. The same read-only CI gate runs for pushes to `main`; it does not
+build, sign, publish, or upload installer artifacts.
+
 ## Run the API
 
 ```powershell
