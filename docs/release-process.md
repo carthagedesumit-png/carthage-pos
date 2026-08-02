@@ -61,6 +61,14 @@ Required checks:
 
 ## V1.0 Pilot Gate
 
+GitHub Actions provides the automatic pre-merge source gate for pull requests
+to `main` and `feature/reporting-engine`. It runs the full automated suite,
+tracked-file hygiene checks, source-only release manifest/checksum validation,
+and whitespace validation on Windows with Python 3.14. CI uses read-only
+repository permissions and does not build, sign, upload, publish, or deploy a
+release. Installer production and clean second-PC Windows acceptance remain
+manual release gates.
+
 Before pilot deployment:
 
 1. Full test suite passes.

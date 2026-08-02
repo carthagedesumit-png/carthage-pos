@@ -149,6 +149,7 @@ activemq-data/
 
 # Environments
 .env
+.env.*
 .envrc
 .venv
 env/
@@ -236,3 +237,11 @@ config/windows-integration.json
 .idea/
 .vscode/
 release/
+
+# Credentials and generated installer binaries
+*.key
+*.pem
+*.pfx
+*.p12
+*.exe
+*.msi
