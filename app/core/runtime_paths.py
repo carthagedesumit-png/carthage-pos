@@ -15,4 +15,3 @@ def application_root() -> Path:
 def resource_path(*parts: str) -> Path:
     """Resolve a packaged resource path without scattering bundle checks."""
     return application_root().joinpath(*parts)
-
