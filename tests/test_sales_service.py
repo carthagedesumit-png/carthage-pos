@@ -71,6 +71,70 @@ class SalesServiceTestCase(unittest.TestCase):
         self.assertAlmostEqual(receipt["sale"]["amount_paid"], 20.0)
         self.assertAlmostEqual(receipt["sale"]["change_given"], 0.0)
 
+    def test_card_and_transfer_references_are_normalized_and_safe(self):
+        from app.sales.sales_service import PAYMENT_CARD, PAYMENT_TRANSFER, create_sale
+        card = create_sale(self.cashier_session,[{"product_id":self.product["id"],"quantity":1}],
+                           payment_method=PAYMENT_CARD,payment_reference="  pos-abc  123 ")
+        transfer = create_sale(self.cashier_session,[{"product_id":self.product["id"],"quantity":1}],
+                               payment_method=PAYMENT_TRANSFER,payment_reference="bank/ref:42")
+        self.assertEqual(card["payments"][0]["reference"],"POS-ABC 123")
+        self.assertEqual(transfer["payments"][0]["reference"],"BANK/REF:42")
+        from app.documents.document_service import generate_sales_receipt
+        receipt=generate_sales_receipt(card["sale"]["sale_id"],width_mm=58)
+        self.assertEqual(receipt["metadata"]["tenders"],"CARD 20.00 [POS-ABC 123]")
+        self.assertIn("POS-ABC",receipt["text"])
+        with self.assertRaises(ValueError):
+            create_sale(self.cashier_session,[{"product_id":self.product["id"],"quantity":1}],
+                        payment_method=PAYMENT_CARD,payment_reference="4111=secret")
+
+    def test_non_cash_overpayment_and_ambiguous_split_change_are_rejected(self):
+        from app.sales.sales_service import PAYMENT_CARD, PAYMENT_MIXED, create_sale
+        with self.assertRaises(ValueError):
+            create_sale(self.cashier_session,[{"product_id":self.product["id"],"quantity":1}],
+                        payment_method=PAYMENT_CARD,amount_paid=21)
+        with self.assertRaises(ValueError):
+            create_sale(self.cashier_session,[{"product_id":self.product["id"],"quantity":1}],
+                        payment_method=PAYMENT_MIXED,payments=[
+                            {"payment_method":"CARD","amount":10},{"payment_method":"TRANSFER","amount":11}])
+
+    def test_refund_idempotency_preserves_stock_and_payment_link(self):
+        from app.database.db_manager import get_connection
+        from app.sales.sales_service import PAYMENT_CARD, create_sale, process_return
+        sale=create_sale(self.cashier_session,[{"product_id":self.product["id"],"quantity":1}],payment_method=PAYMENT_CARD)
+        key="refund-request-0001";payment_id=sale["payments"][0]["id"]
+        first=process_return(self.manager_session,sale["sale"]["sale_id"],[{"sale_item_id":sale["items"][0]["id"],"quantity":1}],"Return",refund_method="CARD",payment_id=payment_id,idempotency_key=key)
+        second=process_return(self.manager_session,sale["sale"]["sale_id"],[{"sale_item_id":sale["items"][0]["id"],"quantity":1}],"Retry",refund_method="CARD",payment_id=payment_id,idempotency_key=key)
+        self.assertEqual(first["return"]["id"],second["return"]["id"])
+        with get_connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM sales_returns").fetchone()[0],1)
+            self.assertEqual(conn.execute("SELECT quantity_in_stock FROM products WHERE id=?",(self.product["id"],)).fetchone()[0],10)
+
+    def test_persisted_cart_checkout_is_idempotent(self):
+        from app.checkout.checkout_service import active_cart, checkout, set_item
+        from app.database.db_manager import get_connection
+        cart=active_cart(self.cashier_session)
+        set_item(self.cashier_session,cart["cart"]["id"],self.product["id"],1)
+        first=checkout(self.cashier_session,cart["cart"]["id"],payment_method="CASH",amount_paid="20.00")
+        second=checkout(self.cashier_session,cart["cart"]["id"],payment_method="CASH",amount_paid="20.00")
+        self.assertEqual(first["receipt"]["sale"]["sale_id"],second["receipt"]["sale"]["sale_id"])
+        with get_connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM sales").fetchone()[0],1)
+            self.assertEqual(conn.execute("SELECT quantity_in_stock FROM products WHERE id=?",(self.product["id"],)).fetchone()[0],9)
+
+    def test_persisted_checkout_rolls_back_sale_stock_payment_and_cart(self):
+        from unittest.mock import patch
+        from app.checkout.checkout_service import active_cart, checkout, set_item
+        from app.database.db_manager import get_connection
+        cart=active_cart(self.cashier_session);cart_id=cart["cart"]["id"]
+        set_item(self.cashier_session,cart_id,self.product["id"],1)
+        with patch("app.finance.posting_service.post_sale",side_effect=RuntimeError("posting failed")):
+            with self.assertRaises(RuntimeError):checkout(self.cashier_session,cart_id,payment_method="CASH",amount_paid=20)
+        with get_connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM sales").fetchone()[0],0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM sale_payments").fetchone()[0],0)
+            self.assertEqual(conn.execute("SELECT quantity_in_stock FROM products WHERE id=?",(self.product["id"],)).fetchone()[0],10)
+            self.assertEqual(conn.execute("SELECT status FROM checkout_carts WHERE id=?",(cart_id,)).fetchone()[0],"ACTIVE")
+
     def test_discounts_and_taxes(self):
         from app.sales.sales_service import DISCOUNT_FIXED, DISCOUNT_PERCENTAGE, calculate_totals
 

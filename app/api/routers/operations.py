@@ -98,7 +98,8 @@ def add_return(
     payload: ReturnCreateRequest,
     session: UserSession = Depends(get_current_session),
 ):
-    return data_response(process_return(session, sale_id, [item.model_dump() for item in payload.items], payload.reason))
+    return data_response(process_return(session, sale_id, [item.model_dump() for item in payload.items], payload.reason,
+        refund_method=payload.refund_method,payment_id=payload.payment_id,idempotency_key=payload.idempotency_key))
 
 
 @router.post("/sales/{sale_id}/refund", status_code=status.HTTP_201_CREATED, tags=["returns"])
@@ -107,7 +108,8 @@ def refund_full_sale(
     payload: RefundRequest,
     session: UserSession = Depends(get_current_session),
 ):
-    return data_response(refund_sale(session, sale_id, payload.reason))
+    return data_response(refund_sale(session, sale_id, payload.reason,
+        refund_method=payload.refund_method,payment_id=payload.payment_id,idempotency_key=payload.idempotency_key))
 
 
 @router.get("/returns/{return_id}", tags=["returns"])

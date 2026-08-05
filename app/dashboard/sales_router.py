@@ -10,7 +10,7 @@ from app.dashboard.auth import CSRF_COOKIE,csrf_token,dashboard_session
 
 router=APIRouter(prefix="/dashboard");templates=Jinja2Templates(directory=str(resource_path("app","dashboard","templates")))
 async def _form(r):
- p=parse_qs((await r.body()).decode(),keep_blank_values=True);return {k:(v if k in {"payment_method","payment_amount","sale_item_id","return_quantity"} else v[-1]) for k,v in p.items()}
+ p=parse_qs((await r.body()).decode(),keep_blank_values=True);return {k:(v if k in {"payment_method","payment_amount","allocation_reference","sale_item_id","return_quantity"} else v[-1]) for k,v in p.items()}
 def _session(r):return dashboard_session(r,required=True)
 def _render(r,t,c,status=200):
  token=csrf_token(r);s=dashboard_session(r);resp=templates.TemplateResponse(r,t,{"request":r,"csrf_token":token,"session":s,"header":{"user":s.full_name if s else "Viewer","store":f"Store #{s.store_id}" if s else ""},"active_page":"sales",**c},status_code=status)
@@ -63,8 +63,8 @@ async def cart_status(request:Request,cart_id:int):
 async def cart_checkout(request:Request,cart_id:int):
  v=await _form(request)
  try:
-  methods=v.get("payment_method",[]);amounts=v.get("payment_amount",[]);payments=[{"payment_method":m,"amount":float(a)} for m,a in zip(methods,amounts) if m and a]
-  method=v.get("tender_type") or "CASH";result=checkout(_session(request),cart_id,payment_method=method,amount_paid=float(v["amount_paid"]) if v.get("amount_paid") else None,payments=payments or None,redeem_points=v.get("redeem_points") or 0,print_after=v.get("print_after")=="true")
+  methods=v.get("payment_method",[]);amounts=v.get("payment_amount",[]);refs=v.get("allocation_reference",[]) or ([""]*len(methods));payments=[{"payment_method":m,"amount":a,"reference":r or None} for m,a,r in zip(methods,amounts,refs) if m and a]
+  method=v.get("tender_type") or "CASH";result=checkout(_session(request),cart_id,payment_method=method,amount_paid=v.get("amount_paid") or None,payments=payments or None,redeem_points=v.get("redeem_points") or 0,print_after=v.get("print_after")=="true",payment_reference=v.get("payment_reference") or None)
  except (ApplicationError,ValueError) as exc:return _redirect(f"/dashboard/sales/checkout?cart_id={cart_id}",error=str(exc))
  return _redirect(f"/dashboard/sales/{result['receipt']['sale']['sale_id']}/receipt",success="Sale completed.")
 @router.get("/sales/{sale_id}/receipt",response_class=HTMLResponse)

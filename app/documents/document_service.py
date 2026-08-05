@@ -439,6 +439,10 @@ def _load_sale(sale_id: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
                                 WHERE wt.customer_id = c.id), 0) AS wallet_balance,
                       COALESCE((SELECT SUM(amount_delta) FROM credit_transactions ct
                                 WHERE ct.customer_id = c.id), 0) AS credit_outstanding
+                      ,COALESCE((SELECT GROUP_CONCAT(
+                          sp.payment_method || ' ' || printf('%.2f',sp.amount) ||
+                          CASE WHEN sp.reference IS NOT NULL THEN ' [' || sp.reference || ']' ELSE '' END,
+                          ' + ') FROM sale_payments sp WHERE sp.sale_id=s.sale_id),'') AS tender_breakdown
                FROM sales s
                JOIN stores st ON st.id = s.store_id
                LEFT JOIN users u ON u.id = s.user_id
@@ -499,6 +503,7 @@ def _sale_document(
             "register": sale["register_name"],
             "payment_method": sale.get("tender_type") or sale["payment_method"],
             "payment_status": sale["payment_status"],
+            "tenders": sale.get("tender_breakdown") or sale.get("payment_method"),
         },
         "line_items": normalized_items,
         "totals": {

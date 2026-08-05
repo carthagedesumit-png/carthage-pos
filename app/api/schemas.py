@@ -154,6 +154,7 @@ PaymentMethod = Literal["CASH", "CARD", "TRANSFER", "WALLET", "CREDIT", "MIXED"]
 class PaymentAllocationRequest(ApiModel):
     payment_method: Literal["CASH", "CARD", "TRANSFER", "WALLET", "CREDIT"]
     amount: float = Field(gt=0)
+    reference: Optional[str] = Field(default=None, max_length=80)
 
 
 class SaleCreateRequest(ApiModel):
@@ -168,6 +169,7 @@ class SaleCreateRequest(ApiModel):
     customer_id: Optional[int] = Field(default=None, gt=0)
     redeem_points: int = Field(default=0, ge=0)
     payments: Optional[list[PaymentAllocationRequest]] = None
+    payment_reference: Optional[str] = Field(default=None, max_length=80)
 
 
 class ReturnLineRequest(ApiModel):
@@ -178,10 +180,16 @@ class ReturnLineRequest(ApiModel):
 class ReturnCreateRequest(ApiModel):
     items: list[ReturnLineRequest] = Field(min_length=1)
     reason: str = Field(min_length=1)
+    refund_method: str = Field(default="ORIGINAL_TENDER", min_length=1, max_length=32)
+    payment_id: Optional[int] = Field(default=None, gt=0)
+    idempotency_key: Optional[str] = Field(default=None, min_length=8, max_length=100)
 
 
 class RefundRequest(ApiModel):
     reason: str = Field(default="Full sale refund", min_length=1)
+    refund_method: str = Field(default="ORIGINAL_TENDER", min_length=1, max_length=32)
+    payment_id: Optional[int] = Field(default=None, gt=0)
+    idempotency_key: Optional[str] = Field(default=None, min_length=8, max_length=100)
 
 
 class SupplierRequest(ApiModel):

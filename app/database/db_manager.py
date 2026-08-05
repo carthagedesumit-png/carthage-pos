@@ -232,6 +232,13 @@ def migrate_finance_tables(cursor):
             WHEN (SELECT status FROM finance_journals WHERE id=OLD.journal_id)='POSTED'
             BEGIN SELECT RAISE(ABORT,'Posted journal lines are immutable'); END;
     """)
+    cash_columns = get_table_columns(cursor, "finance_cash_sessions")
+    for column, definition in {
+        "variance_explanation": "TEXT",
+        "closed_by": "INTEGER REFERENCES users(id)",
+    }.items():
+        if column not in cash_columns:
+            cursor.execute(f"ALTER TABLE finance_cash_sessions ADD COLUMN {column} {definition}")
     defaults = [
         ('1000','Cash on Hand','ASSET'),('1010','Bank','ASSET'),('1100','Accounts Receivable','ASSET'),
         ('1200','Inventory','ASSET'),('2000','Accounts Payable','LIABILITY'),('2100','Tax Payable','LIABILITY'),
@@ -941,6 +948,7 @@ def migrate_sales_table(cursor):
         "wallet_amount": "REAL NOT NULL DEFAULT 0",
         "credit_amount": "REAL NOT NULL DEFAULT 0",
         "tender_type": "TEXT NOT NULL DEFAULT 'CASH'",
+        "source_cart_id": "INTEGER REFERENCES checkout_carts(id)",
     }
     for column, definition in column_defaults.items():
         if column not in columns:
@@ -979,6 +987,7 @@ def migrate_sales_table(cursor):
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_receipt_number ON sales (receipt_number)")
     cursor.execute("UPDATE sales SET tender_type = payment_method WHERE tender_type = 'CASH' AND payment_method != 'CASH'")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales (customer_id)")
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_source_cart ON sales (source_cart_id) WHERE source_cart_id IS NOT NULL")
 
 
 def migrate_sale_items_table(cursor):
@@ -1104,6 +1113,19 @@ def migrate_sales_returns_table(cursor):
             FOREIGN KEY (user_id) REFERENCES users (id)
         );
     """)
+    columns = get_table_columns(cursor, "sales_returns")
+    additions = {
+        "store_id": "INTEGER REFERENCES stores(id)",
+        "refund_method": "TEXT NOT NULL DEFAULT 'ORIGINAL_TENDER'",
+        "payment_id": "INTEGER REFERENCES sale_payments(id)",
+        "idempotency_key": "TEXT",
+    }
+    for column, definition in additions.items():
+        if column not in columns:
+            cursor.execute(f"ALTER TABLE sales_returns ADD COLUMN {column} {definition}")
+    cursor.execute("UPDATE sales_returns SET store_id=(SELECT store_id FROM sales WHERE sales.sale_id=sales_returns.sale_id) WHERE store_id IS NULL")
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_returns_idempotency ON sales_returns(idempotency_key) WHERE idempotency_key IS NOT NULL")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sales_returns_store_created ON sales_returns(store_id,created_at)")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS sales_return_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1131,6 +1153,14 @@ def migrate_customer_financial_tables(cursor):
         )
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sale_payments_sale ON sale_payments (sale_id)")
+    payment_columns = get_table_columns(cursor, "sale_payments")
+    if "reference" not in payment_columns:
+        cursor.execute("ALTER TABLE sale_payments ADD COLUMN reference TEXT")
+    cursor.execute("""INSERT INTO sale_payments(sale_id,payment_method,amount)
+        SELECT s.sale_id,s.payment_method,s.total_amount FROM sales s
+        WHERE s.payment_method!='MIXED' AND NOT EXISTS
+          (SELECT 1 FROM sale_payments sp WHERE sp.sale_id=s.sale_id)""")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sale_payments_method_created ON sale_payments(payment_method,created_at)")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS loyalty_transactions (

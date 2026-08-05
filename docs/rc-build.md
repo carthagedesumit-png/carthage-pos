@@ -1,5 +1,18 @@
 # CBOS RC Build
 
+## Payment and reconciliation RC status
+
+Repository automation covers recorded cash/card/transfer and split tenders,
+checkout retry protection, references, partial/refund limits, stock restoration,
+tender reporting, receipt output, and cash-session reconciliation. There is no
+external gateway verification or banking settlement in this RC. Duplicate
+card/transfer references are permitted because offline terminals can legitimately
+reuse reference formats; operators should investigate duplicates operationally.
+
+The clean second-PC installation and physical peripheral acceptance test remains
+pending because the designated test computer is unavailable. Repository tests do
+not replace that acceptance gate, and no second-PC pass is claimed.
+
 ## Authoritative Version
 
 The v1.0 release candidate version is defined once in

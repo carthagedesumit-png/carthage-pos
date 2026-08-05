@@ -145,6 +145,13 @@ Customer monetary and points balances are never edited directly. Loyalty,
 wallet, and credit state is derived from immutable signed ledger entries. Sales,
 returns, tender allocations, customer ledger entries, stock changes, and their
 audit records share one transaction so a failure cannot leave partial state.
+`sale_payments` is the authoritative tender breakdown; the sale header retains
+compatibility totals and a unique optional source-cart link. Card and transfer
+references are operational evidence only and never imply external verification.
+Refunds retain method, operator, store, optional original-payment link, and an
+optional unique request key without rewriting the original tender. Cash sessions
+derive expected cash from opening balance, movements, cash collections, and the
+proportional cash share of refunds.
 
 ## Migration Strategy
 

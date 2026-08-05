@@ -114,7 +114,7 @@ def record_income(session,income_date,income_type,amount,description,tax_amount=
     return journal
 
 def open_cash(session,amount,store_id=None):
-    s,store=_session(session,True,store_id);amount=_money(amount)
+    s,store=_session(session,False,store_id);amount=_money(amount)
     with transaction() as conn:
         if conn.execute("SELECT 1 FROM finance_cash_sessions WHERE store_id=? AND user_id=? AND status='OPEN'",(store,s.user_id)).fetchone():raise ValidationError('A cash session is already open.')
         cur=conn.execute('INSERT INTO finance_cash_sessions(store_id,user_id,opening_amount) VALUES(?,?,?)',(store,s.user_id,amount));_audit(conn,s,store,'CASH_OPENED','cash_session',cur.lastrowid)
@@ -131,15 +131,23 @@ def cash_adjustment(session,cash_session_id,amount,reason,movement_type='ADJUSTM
         from app.finance.posting_service import post_cash_movement
         post_cash_movement(s,cur.lastrowid,conn)
     return cur.lastrowid
-def close_cash(session,cash_session_id,closing_amount):
-    s,_=_session(session,True);closing=_money(closing_amount,'Closing cash')
+def close_cash(session,cash_session_id,closing_amount,variance_explanation=None):
+    s,_=_session(session,False);closing=_money(closing_amount,'Closing cash')
     with transaction() as conn:
         row=conn.execute("SELECT * FROM finance_cash_sessions WHERE id=? AND status='OPEN'",(cash_session_id,)).fetchone()
         if not row:raise ValidationError('Open cash session not found.')
-        require_store_access(s,row['store_id']);moves=conn.execute('SELECT COALESCE(SUM(amount),0) FROM finance_cash_movements WHERE cash_session_id=?',(cash_session_id,)).fetchone()[0]
+        require_store_access(s,row['store_id'])
+        if row['user_id'] != s.user_id and s.role not in {'admin','manager'}:raise AuthorizationError("A cashier cannot close another cashier's cash session.")
+        moves=conn.execute('SELECT COALESCE(SUM(amount),0) FROM finance_cash_movements WHERE cash_session_id=?',(cash_session_id,)).fetchone()[0]
         sales=conn.execute("SELECT COALESCE(SUM(sp.amount),0) FROM sale_payments sp JOIN sales s ON s.sale_id=sp.sale_id WHERE s.store_id=? AND s.user_id=? AND sp.payment_method='CASH' AND s.created_at>=?",(row['store_id'],row['user_id'],row['opened_at'])).fetchone()[0]
-        expected=round(row['opening_amount']+moves+sales,2);variance=round(closing-expected,2)
-        conn.execute("UPDATE finance_cash_sessions SET expected_amount=?,closing_amount=?,variance=?,status='CLOSED',closed_at=CURRENT_TIMESTAMP WHERE id=?",(expected,closing,variance,cash_session_id));_audit(conn,s,row['store_id'],'CASH_RECONCILED','cash_session',cash_session_id,{'expected':expected,'closing':closing,'variance':variance})
+        cash_refunds=conn.execute("""SELECT COALESCE(SUM(sr.total_refunded * sp.cash_amount / NULLIF(sp.tender_amount,0)),0)
+          FROM sales_returns sr JOIN sales sale ON sale.sale_id=sr.sale_id
+          JOIN (SELECT sale_id,SUM(amount) tender_amount,SUM(CASE WHEN payment_method='CASH' THEN amount ELSE 0 END) cash_amount FROM sale_payments GROUP BY sale_id) sp ON sp.sale_id=sale.sale_id
+          WHERE sale.store_id=? AND sale.user_id=? AND sr.created_at>=?""",(row['store_id'],row['user_id'],row['opened_at'])).fetchone()[0]
+        expected=round(row['opening_amount']+moves+sales-cash_refunds,2);variance=round(closing-expected,2)
+        explanation=str(variance_explanation or '').strip() or None
+        if abs(variance)>=5 and not explanation:raise ValidationError('A variance explanation is required for a material variance.')
+        conn.execute("UPDATE finance_cash_sessions SET expected_amount=?,closing_amount=?,variance=?,variance_explanation=?,closed_by=?,status='CLOSED',closed_at=CURRENT_TIMESTAMP WHERE id=?",(expected,closing,variance,explanation,s.user_id,cash_session_id));_audit(conn,s,row['store_id'],'CASH_RECONCILED','cash_session',cash_session_id,{'expected':expected,'closing':closing,'variance':variance,'explanation':explanation})
     return {'expected_amount':expected,'closing_amount':closing,'variance':variance}
 
 def add_tax_rate(session,name,rate,pricing_mode='EXCLUSIVE',liability_account_id=None):

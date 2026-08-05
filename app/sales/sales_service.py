@@ -1,5 +1,7 @@
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
+import re
+import json
 
 from auth import AuthorizationError, INVENTORY_ROLES, require_store_access, validate_session
 from app.core.config import get_config
@@ -38,6 +40,8 @@ PAYMENT_STATUS_PAID = "PAID"
 DISCOUNT_PERCENTAGE = "PERCENTAGE"
 DISCOUNT_FIXED = "FIXED"
 logger = get_logger("sales")
+PAYMENT_REFERENCE_MAX_LENGTH = 80
+PAYMENT_REFERENCE_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9 ._:/#-]*$")
 
 
 def calculate_totals(
@@ -121,6 +125,8 @@ def process_payment(total_amount, payment_method, amount_paid=None):
     amount_paid = money_round(amount_paid)
     if amount_paid < total_amount:
         raise SalesError("Insufficient payment.")
+    if payment_method != PAYMENT_CASH and amount_paid > total_amount:
+        raise SalesError("Non-cash payment cannot exceed the amount due.")
     return {
         "payment_method": payment_method,
         "payment_status": PAYMENT_STATUS_PAID,
@@ -161,6 +167,8 @@ def create_sale(
     customer_id=None,
     redeem_points=0,
     payments=None,
+    source_cart_id=None,
+    payment_reference=None,
 ):
     session = require_session(session)
     store_id = int(store_id or session.store_id)
@@ -196,6 +204,7 @@ def create_sale(
         payment = _prepare_sale_payments(
             conn, customer, totals["total_amount"], payment_method,
             amount_paid=amount_paid, payments=payments, redeem_points=redeem_points,
+            payment_reference=payment_reference,
         )
         points_earned = calculate_earned_points(
             totals["total_amount"] - payment["loyalty_redemption_amount"]
@@ -208,8 +217,9 @@ def create_sale(
                 tax, tax_amount, total, total_amount, payment_method, payment_status,
                 amount_paid, change_given, customer_id, customer_group_id,
                 loyalty_points_earned, loyalty_points_redeemed,
-                loyalty_redemption_amount, wallet_amount, credit_amount, tender_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                loyalty_redemption_amount, wallet_amount, credit_amount, tender_type,
+                source_cart_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 receipt_number,
                 session.user_id,
@@ -236,12 +246,13 @@ def create_sale(
                 payment["wallet_amount"],
                 payment["credit_amount"],
                 payment["payment_method"],
+                int(source_cart_id) if source_cart_id is not None else None,
             )
         )
         sale_id = cursor.lastrowid
         conn.executemany(
-            "INSERT INTO sale_payments (sale_id, payment_method, amount) VALUES (?, ?, ?)",
-            [(sale_id, item["payment_method"], item["amount"]) for item in payment["payments"]],
+            "INSERT INTO sale_payments (sale_id, payment_method, amount, reference) VALUES (?, ?, ?, ?)",
+            [(sale_id, item["payment_method"], item["amount"], item.get("reference")) for item in payment["payments"]],
         )
         if customer:
             if payment["loyalty_points_redeemed"]:
@@ -291,6 +302,19 @@ def create_sale(
             )
         from app.finance.posting_service import post_sale
         post_sale(session, sale_id, conn)
+        if source_cart_id is not None:
+            updated = conn.execute(
+                """UPDATE checkout_carts SET status='COMPLETED',completed_sale_id=?,
+                   updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='ACTIVE'""",
+                (sale_id, int(source_cart_id)),
+            )
+            if updated.rowcount != 1:
+                raise SalesError("Checkout cart is no longer active.")
+            conn.execute(
+                "INSERT INTO checkout_events(cart_id,user_id,event_type,details) VALUES(?,?,?,?)",
+                (int(source_cart_id), session.user_id, "CHECKOUT_COMPLETED",
+                 json.dumps({"sale_id": sale_id}, sort_keys=True)),
+            )
 
     log_event(
         logger,
@@ -307,7 +331,7 @@ def create_sale(
 
 def _prepare_sale_payments(
     conn, customer, total_amount, payment_method, amount_paid=None,
-    payments=None, redeem_points=0,
+    payments=None, redeem_points=0, payment_reference=None,
 ):
     """Normalize tender allocations and validate customer-backed balances."""
     validate_payment_method(payment_method)
@@ -350,26 +374,37 @@ def _prepare_sale_payments(
                 raise SalesError("Payment allocation amount is invalid.") from exc
             if amount <= 0:
                 raise SalesError("Payment allocation amount must be positive.")
-            allocations.append({"payment_method": method, "amount": amount})
+            reference = normalize_payment_reference(item.get("reference"), method)
+            allocations.append({"payment_method": method, "amount": amount, "reference": reference})
         tendered = money_round(sum(item["amount"] for item in allocations))
         if tendered < amount_due:
             raise SalesError("Insufficient payment.")
         change = money_round(tendered - amount_due)
         if change:
-            allocations[-1]["amount"] = money_round(allocations[-1]["amount"] - change)
-            if allocations[-1]["amount"] <= 0:
-                raise SalesError("Payment allocation exceeds the amount due.")
+            cash_indexes = [i for i, item in enumerate(allocations) if item["payment_method"] == PAYMENT_CASH]
+            if not cash_indexes:
+                raise SalesError("Non-cash payment allocations cannot exceed the amount due.")
+            cash_index = cash_indexes[-1]
+            if allocations[cash_index]["amount"] < change:
+                raise SalesError("Cash change cannot exceed the cash tendered.")
+            allocations[cash_index]["amount"] = money_round(
+                allocations[cash_index]["amount"] - change
+            )
+            if allocations[cash_index]["amount"] <= 0:
+                raise SalesError("Cash payment allocation must remain positive after change.")
         actual_paid = money_round(tendered + loyalty_amount)
     elif amount_due == 0:
         allocations, actual_paid, change = [], loyalty_amount, 0.0
     elif payment_method == PAYMENT_MIXED:
         raise SalesError("Mixed payment requires tender allocations.")
     elif payment_method in {PAYMENT_WALLET, PAYMENT_CREDIT}:
-        allocations = [{"payment_method": payment_method, "amount": amount_due}]
+        allocations = [{"payment_method": payment_method, "amount": amount_due,
+                        "reference": normalize_payment_reference(payment_reference, payment_method)}]
         actual_paid, change = total_amount, 0.0
     else:
         legacy = process_payment(amount_due, payment_method, amount_paid)
-        allocations = [{"payment_method": payment_method, "amount": amount_due}]
+        allocations = [{"payment_method": payment_method, "amount": amount_due,
+                        "reference": normalize_payment_reference(payment_reference, payment_method)}]
         actual_paid = money_round(legacy["amount_paid"] + loyalty_amount)
         change = legacy["change_given"]
 
@@ -422,7 +457,7 @@ def print_receipt_data(sale_id):
             (sale_id,)
         ).fetchall()]
         payments = [dict(row) for row in conn.execute(
-            "SELECT payment_method, amount FROM sale_payments WHERE sale_id = ? ORDER BY id",
+            "SELECT id, payment_method, amount, reference FROM sale_payments WHERE sale_id = ? ORDER BY id",
             (sale_id,),
         ).fetchall()]
         customer = None
@@ -438,7 +473,8 @@ def print_receipt_data(sale_id):
     return {"sale": sale_data, "items": items, "payments": payments, "customer": customer}
 
 
-def process_return(session, sale_id, return_items, reason):
+def process_return(session, sale_id, return_items, reason, *, refund_method="ORIGINAL_TENDER",
+                   payment_id=None, idempotency_key=None):
     session = require_return_management(session)
     if not reason or not reason.strip():
         raise SalesError("Return reason is required.")
@@ -446,10 +482,22 @@ def process_return(session, sale_id, return_items, reason):
         raise SalesError("Return must contain at least one item.")
 
     with transaction() as conn:
+        idempotency_key = str(idempotency_key).strip() if idempotency_key else None
+        if idempotency_key:
+            existing = conn.execute("SELECT id FROM sales_returns WHERE idempotency_key=?", (idempotency_key,)).fetchone()
+            if existing:
+                return get_return_data(existing["id"])
         sale = conn.execute("SELECT * FROM sales WHERE sale_id = ?", (sale_id,)).fetchone()
         if not sale:
             raise SalesError("Sale not found.")
         session = require_store_access(session, sale["store_id"], manage=True)
+        refund_method = str(refund_method or "ORIGINAL_TENDER").strip().upper()
+        if refund_method not in PAYMENT_METHODS - {PAYMENT_MIXED} | {"ORIGINAL_TENDER"}:
+            raise SalesError("Invalid refund method.")
+        if payment_id is not None:
+            linked = conn.execute("SELECT id FROM sale_payments WHERE id=? AND sale_id=?", (int(payment_id), sale_id)).fetchone()
+            if not linked:
+                raise SalesError("Refund payment does not belong to the original sale.")
 
         prepared_items = []
         total_refunded = 0.0
@@ -481,8 +529,11 @@ def process_return(session, sale_id, return_items, reason):
             })
 
         cursor = conn.execute(
-            "INSERT INTO sales_returns (sale_id, user_id, reason, total_refunded) VALUES (?, ?, ?, ?)",
-            (sale_id, session.user_id, reason.strip(), money_round(total_refunded))
+            """INSERT INTO sales_returns
+               (sale_id, user_id, store_id, reason, total_refunded, refund_method, payment_id, idempotency_key)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (sale_id, session.user_id, sale["store_id"], reason.strip(), money_round(total_refunded),
+             refund_method, int(payment_id) if payment_id is not None else None, idempotency_key)
         )
         return_id = cursor.lastrowid
         for item in prepared_items:
@@ -592,7 +643,7 @@ def _reverse_customer_sale_value(conn, sale, return_id, refund_amount, user_id):
         )
 
 
-def refund_sale(session, sale_id, reason="Full sale refund"):
+def refund_sale(session, sale_id, reason="Full sale refund", **refund_options):
     with get_connection() as conn:
         rows = conn.execute("SELECT id, quantity FROM sale_items WHERE sale_id = ?", (sale_id,)).fetchall()
     if not rows:
@@ -602,6 +653,7 @@ def refund_sale(session, sale_id, reason="Full sale refund"):
         sale_id,
         [{"sale_item_id": row["id"], "quantity": row["quantity"]} for row in rows],
         reason,
+        **refund_options,
     )
 
 
@@ -673,6 +725,18 @@ def search_sales(
 def validate_payment_method(payment_method):
     if payment_method not in PAYMENT_METHODS:
         raise SalesError("Invalid payment method.")
+
+
+def normalize_payment_reference(value, payment_method):
+    """Return a safe operational reference; no gateway verification is implied."""
+    if value is None or not str(value).strip():
+        return None
+    if payment_method not in {PAYMENT_CARD, PAYMENT_TRANSFER}:
+        raise SalesError("Payment references are only supported for card and transfer tenders.")
+    reference = " ".join(str(value).strip().upper().split())
+    if len(reference) > PAYMENT_REFERENCE_MAX_LENGTH or not PAYMENT_REFERENCE_PATTERN.fullmatch(reference):
+        raise SalesError("Payment reference is malformed or too long.")
+    return reference
 
 
 def require_session(session):

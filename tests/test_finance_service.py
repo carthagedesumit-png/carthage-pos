@@ -41,6 +41,16 @@ class FinanceServiceTestCase(unittest.TestCase):
         first=self.f.open_cash(self.sessions['manager'],100);self.f.cash_adjustment(self.sessions['manager'],first,20,'Float added')
         result=self.f.close_cash(self.sessions['manager'],first,118);self.assertEqual(result,{'expected_amount':120.0,'closing_amount':118.0,'variance':-2.0})
         second=self.f.open_cash(self.sessions['manager'],50);self.assertNotEqual(first,second)
+    def test_material_cash_variance_requires_explanation(self):
+        session_id=self.f.open_cash(self.sessions['manager'],100)
+        with self.assertRaises(ValidationError):self.f.close_cash(self.sessions['manager'],session_id,90)
+        result=self.f.close_cash(self.sessions['manager'],session_id,90,'Count verified twice')
+        self.assertEqual(result['variance'],-10.0)
+    def test_cashier_can_reconcile_own_session_but_not_another_cashier_session(self):
+        own=self.f.open_cash(self.sessions['cashier'],25)
+        self.assertEqual(self.f.close_cash(self.sessions['cashier'],own,25)['variance'],0.0)
+        manager_session=self.f.open_cash(self.sessions['manager'],10)
+        with self.assertRaises(AuthorizationError):self.f.close_cash(self.sessions['cashier'],manager_session,10)
     def test_tax_inclusive_exclusive_and_exemption(self):
         self.assertEqual(self.f.calculate_tax(100,.1,'EXCLUSIVE'),{'net':100.0,'tax':10.0,'gross':110.0})
         self.assertEqual(self.f.calculate_tax(110,.1,'INCLUSIVE'),{'net':100.0,'tax':10.0,'gross':110.0})

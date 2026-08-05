@@ -284,7 +284,7 @@ def get_payment_method_report(
     store_ids: Optional[list[int]] = None,
     session: Any = None,
 ) -> list[ReportRow]:
-    """Return refund-aware lifetime sales grouped by payment method."""
+    """Return tender collections without counting split tenders as extra sales."""
     store_ids = _resolve_report_store_ids(session, store_ids)
     store_filter, store_params = _store_clause(store_ids, "s")
     with get_connection() as conn:
@@ -293,16 +293,21 @@ def get_payment_method_report(
             WITH refunds AS (
                 SELECT sale_id, SUM(total_refunded) AS total_refunded
                 FROM sales_returns GROUP BY sale_id
+            ), tender_totals AS (
+                SELECT sale_id, SUM(amount) AS tender_amount
+                FROM sale_payments GROUP BY sale_id
             )
-            SELECT s.payment_method,
-                   COUNT(*) AS transaction_count,
-                   COALESCE(SUM(s.total_amount), 0) AS gross_sales,
-                   COALESCE(SUM(r.total_refunded), 0) AS total_refunds,
-                   COALESCE(SUM(s.total_amount - COALESCE(r.total_refunded, 0)), 0) AS total_sales
-            FROM sales s
+            SELECT sp.payment_method,
+                   COUNT(DISTINCT s.sale_id) AS transaction_count,
+                   COALESCE(SUM(sp.amount), 0) AS gross_sales,
+                   COALESCE(SUM(COALESCE(r.total_refunded,0) * sp.amount / NULLIF(tt.tender_amount,0)), 0) AS total_refunds,
+                   COALESCE(SUM(sp.amount - COALESCE(r.total_refunded,0) * sp.amount / NULLIF(tt.tender_amount,0)), 0) AS total_sales
+            FROM sale_payments sp
+            JOIN sales s ON s.sale_id=sp.sale_id
+            JOIN tender_totals tt ON tt.sale_id=s.sale_id
             LEFT JOIN refunds r ON r.sale_id = s.sale_id
             WHERE 1 = 1 {store_filter}
-            GROUP BY s.payment_method
+            GROUP BY sp.payment_method
             ORDER BY total_sales DESC
             """,
             store_params,

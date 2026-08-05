@@ -1,5 +1,6 @@
 """Persisted cart orchestration over the authoritative sales engine."""
 import json
+import sqlite3
 from auth import INVENTORY_ROLES, require_store_access, validate_session
 from app.barcodes.barcode_service import lookup_product
 from app.core.exceptions import AuthorizationError, SalesError
@@ -84,10 +85,19 @@ def list_holds(session):
     with get_connection() as conn:rows=conn.execute("SELECT id,customer_id,created_at,updated_at FROM checkout_carts WHERE store_id=? AND status='SUSPENDED' ORDER BY updated_at DESC",(session.store_id,)).fetchall()
     return [dict(r) for r in rows]
 
-def checkout(session,cart_id,*,payment_method="CASH",amount_paid=None,payments=None,redeem_points=0,print_after=False):
+def checkout(session,cart_id,*,payment_method="CASH",amount_paid=None,payments=None,redeem_points=0,print_after=False,payment_reference=None):
     session=validate_session(session); cart=get_cart(session,cart_id)
-    result=create_sale(session,[{"product_id":x["product_id"],"quantity":x["quantity"]} for x in cart["items"]],payment_method=payment_method,amount_paid=amount_paid,discount_type=cart["cart"]["discount_type"],discount_value=cart["cart"]["discount_value"],store_id=cart["cart"]["store_id"],customer_id=cart["cart"]["customer_id"],redeem_points=int(redeem_points or 0),payments=payments)
-    with transaction() as conn:conn.execute("UPDATE checkout_carts SET status='COMPLETED',completed_sale_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(result["sale"]["sale_id"],cart_id));_event(conn,cart_id,session.user_id,"CHECKOUT_COMPLETED",{"sale_id":result["sale"]["sale_id"]})
+    if cart["cart"]["status"] == "COMPLETED" and cart["cart"]["completed_sale_id"]:
+        result=print_receipt_data(cart["cart"]["completed_sale_id"])
+    elif cart["cart"]["status"] != "ACTIVE":
+        raise SalesError("Only an active cart can be checked out.")
+    else:
+        try:
+            result=create_sale(session,[{"product_id":x["product_id"],"quantity":x["quantity"]} for x in cart["items"]],payment_method=payment_method,amount_paid=amount_paid,discount_type=cart["cart"]["discount_type"],discount_value=cart["cart"]["discount_value"],store_id=cart["cart"]["store_id"],customer_id=cart["cart"]["customer_id"],redeem_points=int(redeem_points or 0),payments=payments,source_cart_id=cart_id,payment_reference=payment_reference)
+        except sqlite3.IntegrityError:
+            with get_connection() as conn:existing=conn.execute("SELECT sale_id FROM sales WHERE source_cart_id=?",(cart_id,)).fetchone()
+            if not existing:raise
+            result=print_receipt_data(existing["sale_id"])
     show_payment_confirmation(session,result["sale"]["total_amount"]);maybe_open_drawer_after_sale(session,result);clear_display(session)
     hardware=print_receipt(session,result["sale"]["sale_id"]) if print_after else {"skipped":True}
     return {"receipt":result,"document":generate_sales_receipt(result["sale"]["sale_id"]),"hardware":hardware}
