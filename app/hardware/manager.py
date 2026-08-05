@@ -38,12 +38,20 @@ class HardwareManager:
             "scanner": self.scanner.status().to_dict(),
             "customer_display": self.customer_display.status().to_dict(),
             "open_drawer_after_cash_sale": self.settings.open_drawer_after_cash_sale,
+            "receipt_copies": self.settings.receipt_copies,
+            "automatic_receipt_printing": self.settings.automatic_receipt_printing,
         }
 
 
 def build_hardware_manager(settings: Optional[HardwareSettings] = None) -> HardwareManager:
     settings = settings or get_config().hardware
     get_printer_profile(settings.printer_profile)
+    if settings.receipt_copies not in {1, 2, 3}:
+        from app.core.exceptions import ConfigurationError
+        raise ConfigurationError("POS_RECEIPT_COPIES must be between 1 and 3.")
+    if settings.open_drawer_after_cash_sale and not settings.cash_drawer_enabled:
+        from app.core.exceptions import ConfigurationError
+        raise ConfigurationError("Automatic drawer opening requires an enabled cash drawer.")
     if settings.printer_enabled and settings.printer_path:
         printer = TextFilePrinter(settings.printer_path, settings.printer_name)
     else:

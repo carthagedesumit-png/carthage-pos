@@ -129,6 +129,8 @@ Set `CARTHAGE_POS_ENV_FILE` to load a non-default generated environment file.
   file and restore from the latest verified backup.
 - **Printer unavailable:** installation can complete; hardware verification is
   a warning and the POS continues with safe printer fallback.
+
+Printer names, spool paths, copy counts, automatic printing, and drawer capability belong in the installed machine environment, never source control. This RC does not bundle a universal Windows/ESC-POS driver. Treat enabled devices as physically unverified until controlled real-device evidence is captured.
 - **Update rejected:** verify channel, semantic version, package size/checksum,
   database range, and minimum installer version.
 - **Timezone unavailable in packaged Windows:** `UTC` always works; other IANA

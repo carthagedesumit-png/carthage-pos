@@ -10,6 +10,7 @@ from app.database.transactions import transaction
 from app.documents.document_service import generate_sales_receipt
 from app.hardware.hardware_service import (clear_display, maybe_open_drawer_after_sale, open_cash_drawer,
     print_receipt, show_cart_item, show_payment_confirmation, show_totals)
+from app.hardware.manager import get_hardware_manager
 from app.inventory.inventory_service import get_product_by_id, search_products
 from app.sales.sales_service import calculate_totals, create_sale, print_receipt_data, process_return
 
@@ -99,12 +100,13 @@ def checkout(session,cart_id,*,payment_method="CASH",amount_paid=None,payments=N
             if not existing:raise
             result=print_receipt_data(existing["sale_id"])
     show_payment_confirmation(session,result["sale"]["total_amount"]);maybe_open_drawer_after_sale(session,result);clear_display(session)
-    hardware=print_receipt(session,result["sale"]["sale_id"]) if print_after else {"skipped":True}
+    should_print=print_after or get_hardware_manager().settings.automatic_receipt_printing
+    hardware=print_receipt(session,result["sale"]["sale_id"]) if should_print else {"skipped":True}
     return {"receipt":result,"document":generate_sales_receipt(result["sale"]["sale_id"]),"hardware":hardware}
 
-def receipt_actions(session,sale_id,action):
-    if action=="print":return print_receipt(session,sale_id)
-    if action=="drawer":return open_cash_drawer(session)
+def receipt_actions(session,sale_id,action,reason=""):
+    if action=="print":return print_receipt(session,sale_id,reprint=True)
+    if action=="drawer":return open_cash_drawer(session,reason=reason)
     return generate_sales_receipt(sale_id)
 
 def return_sale(session,sale_id,items,reason):return process_return(session,sale_id,items,reason)

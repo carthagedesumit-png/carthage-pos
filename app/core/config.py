@@ -89,6 +89,8 @@ class HardwareSettings:
     printer_profile: str = "80mm"
     printer_name: str = ""
     printer_path: str = ""
+    receipt_copies: int = 1
+    automatic_receipt_printing: bool = False
     cash_drawer_enabled: bool = False
     open_drawer_after_cash_sale: bool = False
     scanner_enabled: bool = True
@@ -394,6 +396,8 @@ def get_config() -> AppConfig:
             printer_profile=os.environ.get("POS_PRINTER_PROFILE", "80mm").strip().lower(),
             printer_name=os.environ.get("POS_RECEIPT_PRINTER_NAME", "").strip(),
             printer_path=os.environ.get("POS_RECEIPT_PRINTER_PATH", "").strip(),
+            receipt_copies=_int_setting("POS_RECEIPT_COPIES", 1, positive=True),
+            automatic_receipt_printing=_bool_setting("POS_AUTOMATIC_RECEIPT_PRINTING", False),
             cash_drawer_enabled=_bool_setting("POS_CASH_DRAWER_ENABLED", False),
             open_drawer_after_cash_sale=_bool_setting("POS_OPEN_DRAWER_AFTER_CASH_SALE", False),
             scanner_enabled=_bool_setting("POS_SCANNER_ENABLED", True),

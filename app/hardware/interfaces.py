@@ -14,6 +14,7 @@ class DeviceStatus:
     available: bool
     adapter: str
     detail: str = ""
+    verified: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

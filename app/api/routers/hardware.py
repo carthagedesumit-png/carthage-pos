@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from auth import UserSession
 from app.api.dependencies import get_current_session
 from app.api.pagination import data_response
-from app.api.schemas import DisplayMessageRequest, ScannerLookupRequest
+from app.api.schemas import DisplayMessageRequest, DrawerOpenRequest, ScannerLookupRequest
 from app.hardware.hardware_service import (
     clear_display,
     display_test_message,
@@ -34,7 +34,7 @@ def printer_test(session: UserSession = Depends(get_current_session)):
 
 @router.post("/printer/receipts/{sale_id}")
 def printer_receipt(sale_id: int, session: UserSession = Depends(get_current_session)):
-    return data_response(print_receipt(session, sale_id))
+    return data_response(print_receipt(session, sale_id, reprint=True))
 
 
 @router.post("/printer/invoices/{sale_id}")
@@ -48,8 +48,8 @@ def printer_credit_note(return_id: int, session: UserSession = Depends(get_curre
 
 
 @router.post("/cash-drawer/open")
-def drawer_open(session: UserSession = Depends(get_current_session)):
-    return data_response(open_cash_drawer(session))
+def drawer_open(payload: DrawerOpenRequest, session: UserSession = Depends(get_current_session)):
+    return data_response(open_cash_drawer(session, reason=payload.reason))
 
 
 @router.post("/scanner/lookup")

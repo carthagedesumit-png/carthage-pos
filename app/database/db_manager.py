@@ -374,6 +374,17 @@ def migrate_hardware_events(cursor):
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_hardware_events_created ON hardware_events (created_at, device_type)"
     )
+    columns = get_table_columns(cursor, "hardware_events")
+    for name, definition in {
+        "sale_id": "INTEGER REFERENCES sales(sale_id)",
+        "reason": "TEXT",
+        "attempt_type": "TEXT",
+    }.items():
+        if name not in columns:
+            cursor.execute(f"ALTER TABLE hardware_events ADD COLUMN {name} {definition}")
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_hardware_events_sale ON hardware_events (sale_id, created_at)"
+    )
 
 
 def migrate_users_table(cursor):

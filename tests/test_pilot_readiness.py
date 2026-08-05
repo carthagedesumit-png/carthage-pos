@@ -46,6 +46,11 @@ class PilotReadinessTestCase(unittest.TestCase):
   report=diagnostics(self.sessions['admin']);self.assertEqual(report['storage']['integrity'],'ok');self.assertIn('api',report);self.assertIn('recovery',report)
   result=run_maintenance(self.sessions['admin'],'OPTIMIZE_DATABASE');self.assertEqual(result['status'],'COMPLETED');self.assertEqual(len(maintenance_history(self.sessions['admin'])),1)
   save_preferences(self.sessions['manager'],{'favorites':['sales','inventory'],'secret':'ignored'});prefs=get_preferences(self.sessions['manager']);self.assertNotIn('secret',prefs);self.assertEqual(prefs['favorites'],['sales','inventory'])
+ def test_pilot_readiness_classifies_and_redacts_physical_state(self):
+  from app.operations.pilot_service import pilot_readiness
+  report=pilot_readiness(self.sessions['admin']);statuses={x['code']:x['status'] for x in report['checks']}
+  self.assertEqual(statuses['database'],'PASS');self.assertEqual(statuses['printer'],'OPTIONAL');self.assertEqual(statuses['physical_acceptance'],'UNVERIFIED')
+  self.assertEqual(report['locations']['application_data'],'<application-data>');self.assertNotIn(str(self.root),str(report))
 
 class PilotDashboardAcceptanceTestCase(unittest.TestCase):
  def setUp(self):

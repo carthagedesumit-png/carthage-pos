@@ -17,6 +17,12 @@ for checkout-facing operations. A completed sale is never rolled back because a
 printer, drawer, or customer display is unavailable. Invalid input and
 unauthorized manual drawer operations still raise normal application errors.
 
+Completed sales and peripheral delivery are separate operations. A failed receipt
+returns a retryable result and never reverses or repeats the sale. Historical
+reprints require manager or administrator authorization, are headed `REPRINT`,
+and are recorded against the sale in `hardware_events`. Manual drawer opens also
+require manager/administrator authority and a 3-200 character operational reason.
+
 ## Supported Strategy
 
 - Thermal printers: existing document text rendered for 58mm or 80mm paper.
@@ -39,6 +45,8 @@ $env:POS_PRINTER_ENABLED="true"
 $env:POS_PRINTER_PROFILE="80mm"       # 58mm, 80mm, or generic
 $env:POS_RECEIPT_PRINTER_NAME="Front Register"
 $env:POS_RECEIPT_PRINTER_PATH="C:\pos-spool\receipt-jobs.txt"
+$env:POS_RECEIPT_COPIES="1"          # 1, 2, or 3
+$env:POS_AUTOMATIC_RECEIPT_PRINTING="false"
 $env:POS_CASH_DRAWER_ENABLED="true"
 $env:POS_OPEN_DRAWER_AFTER_CASH_SALE="true"
 $env:POS_SCANNER_ENABLED="true"
@@ -47,6 +55,17 @@ $env:POS_CUSTOMER_DISPLAY_ENABLED="false"
 
 An enabled printer without a supported adapter/path reports unavailable and
 falls back safely. Device names are descriptive placeholders for future drivers.
+`available` reflects adapter-level availability only; `verified` remains false
+until a real communication test is performed. Configuration must never contain
+credentials. Machine-specific values belong in deployment environment storage,
+not source control.
+
+Keyboard-emulating scanners need no CBOS driver. They submit up to 128 printable
+characters through the checkout barcode field. Unknown, inactive, unavailable,
+and insufficient-stock products are rejected by the existing store-scoped cart
+rules. Each completed scan adds one unit, so deliberate repeated scans remain
+supported. The checkout submit control is independently disabled after submit,
+preventing scan keystrokes from completing a sale.
 
 ## Testing Without Hardware
 
@@ -78,3 +97,13 @@ ESC/POS, USB, serial, network-print, and vendor display SDK adapters can be
 added independently without changing checkout or document-generation logic.
 Production barcode engines implement `BarcodeRenderer`; the default renderer
 intentionally produces dependency-free preview placeholders.
+
+## RC limitations and recovery
+
+CBOS does not claim universal printer, drawer, USB, ESC/POS, or Windows-driver
+compatibility. The included production composition supports disabled devices and
+the file-spool integration contract; real Windows printer integration requires an
+approved adapter. Paper-out, offline, timeout, and cancellation behavior depends
+on that adapter and must be exercised with the actual pilot devices. After a
+failure, verify the completed receipt number, correct the device problem, and use
+the authorized reprint action. Never repeat checkout to obtain a receipt.

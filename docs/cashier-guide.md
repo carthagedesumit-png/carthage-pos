@@ -1,5 +1,11 @@
 # CBOS Cashier Guide
 
+## Scanner and receipt recovery
+
+Keyboard-emulating USB scanners use the checkout Barcode or SKU field and need no CBOS-specific driver. Keep that field focused, scan once per intended unit, and confirm cart quantity before payment. Repeated scans intentionally add quantity; they never submit the separate payment form. Unknown, inactive, and insufficient-stock items must be resolved by a manager.
+
+A printer failure does not cancel a completed sale. Record the receipt number, fix or report the printer problem, and ask a manager or administrator for an audited historical reprint. Never repeat checkout merely to print another copy.
+
 Sign in with your assigned cashier account and store. Scan barcodes or search products, confirm quantities, select a customer when required, and verify tender totals before checkout. CBOS records cash, card/POS terminal, bank transfer, wallet, credit, and mixed tenders. These are operator-recorded payments; CBOS does not contact or independently verify a bank, terminal, or gateway.
 
 Cash must cover the balance and may produce change. Non-cash tenders cannot exceed the balance. Every split line must be positive; only cash in a split may account for change. Card and transfer references are optional operational identifiers, limited to safe short text. Never enter card numbers, CVVs, PINs, credentials, or other payment secrets.

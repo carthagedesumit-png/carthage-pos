@@ -321,6 +321,10 @@ class ScannerLookupRequest(ApiModel):
     store_id: Optional[int] = Field(default=None, gt=0)
 
 
+class DrawerOpenRequest(ApiModel):
+    reason: str = Field(min_length=3, max_length=200)
+
+
 class DisplayMessageRequest(ApiModel):
     message: str = Field(min_length=1, max_length=200)
 

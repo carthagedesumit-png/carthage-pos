@@ -75,7 +75,7 @@ def receipt(request:Request,sale_id:int,success:str="",error:str=""):
 @router.post("/sales/{sale_id}/receipt")
 async def receipt_action(request:Request,sale_id:int):
  v=await _form(request)
- try:result=receipt_actions(_session(request),sale_id,v.get("action"))
+ try:result=receipt_actions(_session(request),sale_id,v.get("action"),v.get("reason") or "")
  except (ApplicationError,ValueError) as exc:return _redirect(f"/dashboard/sales/{sale_id}/receipt",error=str(exc))
  return _redirect(f"/dashboard/sales/{sale_id}/receipt",success="Action completed." if result.get("success",True) else result.get("error"))
 @router.post("/sales/{sale_id}/returns")
