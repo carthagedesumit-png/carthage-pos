@@ -45,10 +45,22 @@ def pilot_readiness(session):
             integrity=conn.execute('PRAGMA quick_check').fetchone()[0]
             stores=conn.execute('SELECT COUNT(*) FROM stores WHERE is_active=1').fetchone()[0]
             admins=conn.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND is_active=1").fetchone()[0]
+            managers=conn.execute("SELECT COUNT(*) FROM users u JOIN stores s ON s.id=u.home_store_id WHERE u.role='manager' AND u.is_active=1 AND s.is_active=1").fetchone()[0]
+            cashiers=conn.execute("SELECT COUNT(*) FROM users u JOIN stores s ON s.id=u.home_store_id WHERE u.role='cashier' AND u.is_active=1 AND s.is_active=1").fetchone()[0]
+            forced=conn.execute("SELECT COUNT(*) FROM users WHERE is_active=1 AND force_password_change=1").fetchone()[0]
+            products=conn.execute("SELECT COUNT(*) FROM products WHERE is_active=1").fetchone()[0]
+            onboarding={r['step_code']:r['status'] for r in conn.execute('SELECT step_code,status FROM pilot_onboarding_steps')}
         add('database',STATUS_PASS if integrity=='ok' and schema==DATABASE_SCHEMA_VERSION else STATUS_BLOCKING,
             'Database reachable and migration-compatible.' if integrity=='ok' and schema==DATABASE_SCHEMA_VERSION else 'Database integrity or migration compatibility requires attention.')
         add('bootstrap',STATUS_PASS if stores and admins else STATUS_BLOCKING,
             'Active store and administrator are present.' if stores and admins else 'An active store and administrator are required.')
+        add('required_users',STATUS_PASS if managers and cashiers and not forced else STATUS_BLOCKING,
+            'Required manager and cashier are active and password changes are resolved.' if managers and cashiers and not forced else 'Required users or forced password changes require attention.')
+        add('product_catalogue',STATUS_PASS if products and onboarding.get('product_catalogue')=='COMPLETED' else STATUS_BLOCKING,
+            'Product catalogue has records and recorded approval.' if products and onboarding.get('product_catalogue')=='COMPLETED' else 'Product catalogue approval is required.')
+        required=('opening_stock','training','go_live')
+        add('controlled_acceptance',STATUS_PASS if all(onboarding.get(x)=='COMPLETED' for x in required) else STATUS_BLOCKING,
+            'Controlled pilot acceptance records are complete.' if all(onboarding.get(x)=='COMPLETED' for x in required) else 'Opening-stock reconciliation, training, and go-live evidence remain incomplete.')
     except Exception:
         add('database',STATUS_BLOCKING,'Database is not reachable.');add('bootstrap',STATUS_BLOCKING,'Bootstrap readiness could not be checked.')
     backup_path=Path(config.backup.directory)
@@ -71,6 +83,15 @@ def pilot_readiness(session):
     add('physical_acceptance',STATUS_UNVERIFIED,'Windows clean-PC and real peripheral acceptance remain pending.')
     return {'application_version':APP_VERSION,'locations':{'application_data':'<application-data>','backup':'<backup-location>'},'checks':checks,
             'overall':STATUS_BLOCKING if any(x['status']==STATUS_BLOCKING for x in checks) else STATUS_WARNING if any(x['status']==STATUS_WARNING for x in checks) else STATUS_UNVERIFIED}
+
+def assess_pilot_readiness(session,evidence_reference=None):
+    """Persist a deterministic, redacted readiness snapshot; never activates a pilot."""
+    session=_admin(session);report=pilot_readiness(session);reference=str(evidence_reference or '').strip()
+    if len(reference)>120 or reference.startswith(('/', '\\')) or ':\\' in reference:raise ValidationError('Evidence reference is invalid.')
+    snapshot={'application_version':report['application_version'],'checks':report['checks'],'overall':report['overall']}
+    with transaction() as conn:
+        conn.execute('INSERT INTO pilot_audit_events(event_type,user_id,store_id,subject_reference,details) VALUES(?,?,?,?,?)',('READINESS_ASSESSED',session.user_id,session.store_id,reference or None,json.dumps(snapshot,sort_keys=True)))
+    return {**report,'assessed_by':session.username,'assessed_at':__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),'evidence_reference':reference or None,'activation_performed':False}
 def run_maintenance(session,operation):
     session=_admin(session);operation=str(operation).upper()
     if operation not in ALLOWED_MAINTENANCE:raise ValidationError('Unsupported maintenance operation.')

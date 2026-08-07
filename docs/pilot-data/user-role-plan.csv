@@ -1,0 +1,4 @@
+username,full_name,role,home_store,status,forced_password_change_verified
+pilot-admin,Fictional Administrator,admin,MAIN,planned,no
+pilot-manager,Fictional Manager,manager,MAIN,planned,no
+pilot-cashier,Fictional Cashier,cashier,MAIN,planned,no

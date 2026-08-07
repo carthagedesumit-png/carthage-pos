@@ -1,0 +1,2 @@
+sku,barcode,name,selling_price,cost_price,category,supplier,unit,reorder_level
+FICTIONAL-TEA-001,CBOSDEMO001,Fictional Pilot Tea,4.50,2.10,General,Default Supplier,each,5

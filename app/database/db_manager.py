@@ -57,6 +57,19 @@ def get_table_columns(cursor, table_name):
     return {row["name"] for row in cursor.execute(f"PRAGMA table_info({table_name})").fetchall()}
 
 
+def execute_migration_script(cursor, script):
+    """Execute a SQL script without breaking the surrounding migration transaction."""
+    statement = ""
+    for line in script.splitlines(keepends=True):
+        statement += line
+        if sqlite3.complete_statement(statement):
+            if statement.strip():
+                cursor.execute(statement)
+            statement = ""
+    if statement.strip():
+        raise sqlite3.OperationalError("Incomplete SQL migration statement")
+
+
 def initialize_database():
     """Creates application tables and applies safe SQLite migrations."""
     with get_connection() as conn:
@@ -83,21 +96,54 @@ def initialize_database():
         migrate_customer_financial_tables(cursor)
         migrate_finance_tables(cursor)
         migrate_pilot_operations_tables(cursor)
+        migrate_pilot_readiness_tables(cursor)
         migrate_executive_analytics_tables(cursor)
-        migrate_pilot_operations_tables(cursor)
         migrate_inventory_compatibility(cursor)
         cursor.execute(f"PRAGMA user_version = {DATABASE_SCHEMA_VERSION}")
     print("Carthage POS Database Initialized Successfully.")
 
-def migrate_pilot_operations_tables(cursor):
-    cursor.executescript("""
-        CREATE TABLE IF NOT EXISTS user_dashboard_preferences (user_id INTEGER PRIMARY KEY, preferences TEXT NOT NULL DEFAULT '{}', updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id));
-        CREATE TABLE IF NOT EXISTS maintenance_history (id INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL, status TEXT NOT NULL, details TEXT, user_id INTEGER NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id));
-        CREATE TABLE IF NOT EXISTS recovery_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, status TEXT NOT NULL, details TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+def migrate_pilot_readiness_tables(cursor):
+    """Additive, idempotent pilot controls; no operational rows are modified."""
+    execute_migration_script(cursor, """
+        CREATE TABLE IF NOT EXISTS pilot_onboarding_steps (
+            step_code TEXT PRIMARY KEY, status TEXT NOT NULL
+                CHECK(status IN ('COMPLETED','PENDING','WARNING','BLOCKED','PHYSICALLY_UNVERIFIED')),
+            evidence_reference TEXT, notes TEXT, updated_by INTEGER NOT NULL,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(updated_by) REFERENCES users(id));
+        CREATE TABLE IF NOT EXISTS pilot_import_batches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, confirmation_token TEXT NOT NULL UNIQUE,
+            import_type TEXT NOT NULL CHECK(import_type IN ('PRODUCTS','OPENING_STOCK')),
+            target_store_id INTEGER, payload_json TEXT NOT NULL, payload_digest TEXT NOT NULL,
+            row_count INTEGER NOT NULL, status TEXT NOT NULL
+                CHECK(status IN ('VALIDATED','APPLIED','FAILED','EXPIRED')),
+            validated_by INTEGER NOT NULL, validated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            applied_by INTEGER, applied_at DATETIME, outcome_json TEXT,
+            FOREIGN KEY(target_store_id) REFERENCES stores(id),
+            FOREIGN KEY(validated_by) REFERENCES users(id), FOREIGN KEY(applied_by) REFERENCES users(id));
+        CREATE TABLE IF NOT EXISTS pilot_opening_stock_batches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, import_batch_id INTEGER NOT NULL UNIQUE,
+            store_id INTEGER NOT NULL, status TEXT NOT NULL CHECK(status='APPLIED'),
+            total_quantity INTEGER NOT NULL, total_value TEXT NOT NULL,
+            applied_by INTEGER NOT NULL, applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(import_batch_id) REFERENCES pilot_import_batches(id),
+            FOREIGN KEY(store_id) REFERENCES stores(id), FOREIGN KEY(applied_by) REFERENCES users(id));
+        CREATE TABLE IF NOT EXISTS pilot_opening_stock_lines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL, quantity INTEGER NOT NULL CHECK(quantity >= 0),
+            unit_cost TEXT NOT NULL, movement_id INTEGER,
+            UNIQUE(batch_id,product_id), FOREIGN KEY(batch_id) REFERENCES pilot_opening_stock_batches(id),
+            FOREIGN KEY(product_id) REFERENCES products(id), FOREIGN KEY(movement_id) REFERENCES stock_movements(id));
+        CREATE TABLE IF NOT EXISTS pilot_audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, user_id INTEGER NOT NULL,
+            store_id INTEGER, subject_reference TEXT, details TEXT NOT NULL DEFAULT '{}',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id), FOREIGN KEY(store_id) REFERENCES stores(id));
+        CREATE INDEX IF NOT EXISTS idx_pilot_audit_created ON pilot_audit_events(created_at);
     """)
 
 def migrate_executive_analytics_tables(cursor):
-    cursor.executescript("""
+    execute_migration_script(cursor, """
         CREATE TABLE IF NOT EXISTS executive_report_schedules (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
             frequency TEXT NOT NULL CHECK(frequency IN ('DAILY','WEEKLY','MONTHLY','QUARTERLY')),
@@ -112,7 +158,7 @@ def migrate_executive_analytics_tables(cursor):
     """)
 
 def migrate_pilot_operations_tables(cursor):
-    cursor.executescript("""
+    execute_migration_script(cursor, """
         CREATE TABLE IF NOT EXISTS user_dashboard_preferences (
             user_id INTEGER PRIMARY KEY, preferences TEXT NOT NULL DEFAULT '{}',
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id));
@@ -128,7 +174,7 @@ def migrate_pilot_operations_tables(cursor):
 
 def migrate_finance_tables(cursor):
     """Create store-scoped double-entry accounting and cash-operation storage."""
-    cursor.executescript("""
+    execute_migration_script(cursor, """
         CREATE TABLE IF NOT EXISTS finance_accounts (
             id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE,
             name TEXT NOT NULL, account_type TEXT NOT NULL CHECK(account_type IN
