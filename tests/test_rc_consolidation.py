@@ -159,6 +159,23 @@ class MigrationConsolidationTestCase(unittest.TestCase):
 
 
 class ReleasePreparationTestCase(unittest.TestCase):
+    full_commit = "abcdef1234567890abcdef1234567890abcdef12"
+
+    @classmethod
+    def _git_result(cls, *args, dirty=False):
+        values = {
+            ("rev-parse", "--short=12", "HEAD"): (0, cls.full_commit[:12]),
+            ("rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"): (0, cls.full_commit),
+            ("rev-parse", "--verify", "--end-of-options", f"{cls.full_commit}^{{commit}}"): (0, cls.full_commit),
+            ("rev-parse", "--verify", "--end-of-options", f"{cls.full_commit[:12]}^{{commit}}"): (0, cls.full_commit),
+            ("branch", "--show-current"): (0, "feature/reporting-engine"),
+            ("status", "--porcelain", "--untracked-files=all"): (0, " M app/core/version.py" if dirty else ""),
+            ("ls-files",): (0, ""),
+            ("--version",): (0, "git version test"),
+        }
+        returncode, stdout = values[args]
+        return subprocess.CompletedProcess(["git", *args], returncode, stdout + ("\n" if stdout else ""), "")
+
     def test_runtime_manifest_drives_deterministic_pyinstaller_arguments(self):
         from app.deployment.runtime_assets import pyinstaller_arguments, validate_runtime_assets
         arguments = pyinstaller_arguments(Path.cwd())
@@ -176,25 +193,90 @@ class ReleasePreparationTestCase(unittest.TestCase):
                 pyinstaller_arguments(directory)
 
     def test_source_evidence_binds_commit_and_cannot_satisfy_physical_gates(self):
-        from scripts.validate_release import generate_release_evidence, source_commit
+        from scripts.validate_release import generate_release_evidence
         with tempfile.TemporaryDirectory() as directory:
             release_dir = Path(directory) / "CBOS-1.0.0-rc.2"
-            evidence = generate_release_evidence(release_dir)
+            with patch("scripts.validate_release.source_commit", return_value=self.full_commit), \
+                    patch("scripts.validate_release.working_tree_clean", return_value=True):
+                evidence = generate_release_evidence(release_dir)
             self.assertEqual(evidence["build_type"], "source-only")
-            self.assertIsNone(evidence["source_commit"])
-            self.assertIsNone(evidence["release_manifest"]["source_commit"])
+            self.assertEqual(evidence["source_commit"], self.full_commit)
+            self.assertEqual(evidence["release_manifest"]["source_commit"], self.full_commit)
             self.assertEqual(evidence["gate_status"]["source_validation"], "passed")
             self.assertEqual(evidence["gate_status"]["installer_validation"], "not-run")
             self.assertEqual(evidence["gate_status"]["clean_pc_acceptance"], "physically-unverified")
             self.assertNotIn(str(Path(directory)), json.dumps(evidence))
+            self.assertFalse(any(path.suffix == ".exe" for path in release_dir.rglob("*")))
+
+    def test_dirty_source_cannot_persist_release_evidence(self):
+        from scripts.validate_release import generate_release_evidence
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("scripts.validate_release.source_commit", return_value=self.full_commit), \
+                patch("scripts.validate_release.working_tree_clean", return_value=False):
             with self.assertRaises(ValueError):
-                generate_release_evidence(release_dir, source_commit="000000000000")
+                generate_release_evidence(Path(directory) / "CBOS-1.0.0-rc.2")
+
+    def test_offline_evidence_identity_requires_matching_normalized_full_commit(self):
+        from scripts.validate_release import validate_evidence_identity
+        correct = {"version": "1.0.0-rc.2", "source_commit": self.full_commit}
+        uppercase = {"version": "1.0.0-rc.2", "source_commit": self.full_commit.upper()}
+        short = {"version": "1.0.0-rc.2", "source_commit": self.full_commit[:12]}
+        wrong = {"version": "1.0.0-rc.2", "source_commit": "0" * 40}
+        malformed = {"version": "1.0.0-rc.2", "source_commit": "z" * 40}
+        missing = {"version": "1.0.0-rc.2"}
+        self.assertTrue(validate_evidence_identity(correct, expected_commit=self.full_commit)["valid"])
+        self.assertTrue(validate_evidence_identity(uppercase, expected_commit=self.full_commit)["valid"])
+        self.assertFalse(validate_evidence_identity(short, expected_commit=self.full_commit)["valid"])
+        self.assertFalse(validate_evidence_identity(wrong, expected_commit=self.full_commit)["valid"])
+        self.assertFalse(validate_evidence_identity(malformed, expected_commit=self.full_commit)["valid"])
+        self.assertFalse(validate_evidence_identity(missing, expected_commit=self.full_commit)["valid"])
+
+    def test_commit_reference_resolution_fails_closed_and_normalizes(self):
+        from scripts.validate_release import resolve_commit_reference
+
+        def result(returncode, stdout="", stderr=""):
+            return subprocess.CompletedProcess(["git"], returncode, stdout, stderr)
+
+        uppercase = lambda _args, _root: result(0, self.full_commit.upper() + "\n")
+        ambiguous = lambda _args, _root: result(128, stderr="short object ID is ambiguous")
+        unknown = lambda _args, _root: result(128, stderr="Needed a single revision")
+        malformed = lambda _args, _root: result(0, "not-a-commit\n")
+        self.assertEqual(resolve_commit_reference(self.full_commit[:12], runner=uppercase), self.full_commit)
+        self.assertIsNone(resolve_commit_reference(self.full_commit[:12], runner=ambiguous))
+        self.assertIsNone(resolve_commit_reference(self.full_commit[:12], runner=unknown))
+        self.assertIsNone(resolve_commit_reference(self.full_commit[:12], runner=malformed))
+        with patch("scripts.validate_release.subprocess.run", side_effect=OSError("git missing")):
+            self.assertIsNone(resolve_commit_reference(self.full_commit[:12]))
+
+    def test_unique_short_input_persists_only_resolved_full_commit(self):
+        from scripts.validate_release import generate_release_evidence
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("scripts.validate_release.source_commit", return_value=self.full_commit), \
+                patch("scripts.validate_release.working_tree_clean", return_value=True), \
+                patch("scripts.validate_release.resolve_commit_reference", return_value=self.full_commit):
+            evidence = generate_release_evidence(
+                Path(directory) / "CBOS-1.0.0-rc.2", source_commit=self.full_commit[:12]
+            )
+        self.assertEqual(evidence["source_commit"], self.full_commit)
+        self.assertEqual(evidence["release_manifest"]["source_commit"], self.full_commit)
+
+    def test_ambiguous_unknown_and_mismatched_commit_inputs_fail_closed(self):
+        from scripts.validate_release import generate_release_evidence
+        for resolved in (None, "0" * 40):
+            with self.subTest(resolved=resolved), tempfile.TemporaryDirectory() as directory, \
+                    patch("scripts.validate_release.source_commit", return_value=self.full_commit), \
+                    patch("scripts.validate_release.working_tree_clean", return_value=True), \
+                    patch("scripts.validate_release.resolve_commit_reference", return_value=resolved):
+                with self.assertRaises(ValueError):
+                    generate_release_evidence(
+                        Path(directory) / "CBOS-1.0.0-rc.2", source_commit=self.full_commit[:12]
+                    )
 
     def test_rc2_identity_rejects_stale_or_mismatched_evidence(self):
         from scripts.validate_release import validate_evidence_identity
-        expected_commit = "abcdef123456"
+        expected_commit = self.full_commit
         stale = {"version": "1.0.0-rc.1", "source_commit": expected_commit}
-        wrong_commit = {"version": "1.0.0-rc.2", "source_commit": "000000000000"}
+        wrong_commit = {"version": "1.0.0-rc.2", "source_commit": "0" * 40}
         self.assertFalse(validate_evidence_identity(stale, expected_commit=expected_commit)["valid"])
         self.assertFalse(validate_evidence_identity(wrong_commit, expected_commit=expected_commit)["valid"])
 
@@ -211,14 +293,59 @@ class ReleasePreparationTestCase(unittest.TestCase):
         self.assertEqual(expected_installer_filename(), "CBOS-Setup-1.0.0-rc.2.exe")
         self.assertEqual(expected_release_directory(), "CBOS-1.0.0-rc.2")
 
-    def test_preflight_reports_dirty_tree_test_evidence_and_physical_gates(self):
+    def test_dirty_tree_blocks_preflight_and_physical_gates_remain_pending(self):
         from scripts.build_preflight import run_preflight
-        result = run_preflight(Path.cwd())
+        with patch("scripts.build_preflight._git", side_effect=lambda *args, **_kwargs: self._git_result(*args, dirty=True)):
+            result = run_preflight(Path.cwd())
         checks = {item["name"]: item for item in result["checks"]}
         self.assertFalse(result["build_performed"])
+        self.assertFalse(result["valid"])
         self.assertFalse(checks["clean_working_tree"]["passed"])
         self.assertFalse(checks["canonical_tests_same_commit"]["passed"])
         self.assertIn("physically-unverified", {item["status"] for item in result["warnings"]})
+
+    def test_clean_committed_tree_accepts_full_sha_test_evidence_without_building(self):
+        from scripts.build_preflight import run_preflight
+        evidence = {
+            "source_commit": self.full_commit,
+            "application_version": "1.0.0-rc.2",
+            "status": "passed",
+            "test_total": 316,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_path = Path(directory) / "test-evidence.json"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+            with patch("scripts.build_preflight._git", side_effect=lambda *args, **_kwargs: self._git_result(*args)):
+                result = run_preflight(Path.cwd(), test_evidence=evidence_path)
+        checks = {item["name"]: item for item in result["checks"]}
+        self.assertTrue(checks["clean_working_tree"]["passed"])
+        self.assertTrue(checks["canonical_tests_same_commit"]["passed"])
+        self.assertTrue(result["valid"], result)
+        self.assertFalse(result["build_performed"])
+        warning_status = {item["name"]: item["status"] for item in result["warnings"]}
+        self.assertEqual(warning_status["installer_build"], "pending")
+        self.assertEqual(warning_status["clean_pc_acceptance"], "physically-unverified")
+
+    def test_full_head_resolution_failure_blocks_git_checkout(self):
+        from scripts.build_preflight import run_preflight
+
+        def git_result(*args, **_kwargs):
+            if args == ("rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"):
+                return subprocess.CompletedProcess(["git", *args], 128, "", "failure")
+            return self._git_result(*args)
+
+        with patch("scripts.build_preflight._git", side_effect=git_result):
+            result = run_preflight(Path.cwd())
+        check = next(item for item in result["checks"] if item["name"] == "git_checkout")
+        self.assertFalse(check["passed"])
+
+    def test_preflight_reports_authoritative_full_sha(self):
+        from scripts.build_preflight import run_preflight
+        with patch("scripts.build_preflight._git", side_effect=lambda *args, **_kwargs: self._git_result(*args)):
+            result = run_preflight(Path.cwd())
+        source = next(item for item in result["warnings"] if item["name"] == "source_commit")
+        self.assertEqual(source["commit"], self.full_commit)
+        self.assertEqual(source["display_commit"], self.full_commit[:12])
 
     def test_inno_discovery_uses_explicit_and_standard_paths_without_path_dependency(self):
         from scripts.build_preflight import discover_iscc
@@ -233,12 +360,20 @@ class ReleasePreparationTestCase(unittest.TestCase):
 
     def test_preflight_accepts_full_expected_commit(self):
         from scripts.build_preflight import run_preflight
-        full_commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        result = run_preflight(Path.cwd(), expected_commit=full_commit)
+        with patch("scripts.build_preflight._git", side_effect=lambda *args, **_kwargs: self._git_result(*args)):
+            result = run_preflight(Path.cwd(), expected_commit=self.full_commit)
         check = next(item for item in result["checks"] if item["name"] == "expected_commit")
         self.assertTrue(check["passed"], check)
+
+    def test_build_script_checks_and_validates_full_git_commit(self):
+        script = Path("scripts/build_rc.ps1").read_text(encoding="utf-8")
+        resolution = script.index("$CommitOutput = & git rev-parse HEAD")
+        exit_check = script.index("if ($LASTEXITCODE -ne 0)", resolution)
+        normalization = script.index("$Commit = ([string]$CommitOutput).Trim()", exit_check)
+        validation = script.index("$Commit -cnotmatch '^[0-9a-f]{40}$'", normalization)
+        self.assertLess(resolution, exit_check)
+        self.assertLess(exit_check, normalization)
+        self.assertLess(normalization, validation)
 
 
 if __name__ == "__main__":

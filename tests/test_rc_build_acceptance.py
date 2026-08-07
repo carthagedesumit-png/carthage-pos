@@ -10,8 +10,12 @@ class RcBuildAcceptanceTestCase(unittest.TestCase):
         self.root = Path(self.temp_dir.name)
         self.clean_checkout = patch("scripts.validate_release.working_tree_clean", return_value=True)
         self.clean_checkout.start()
+        self.full_commit = "abcdef1234567890abcdef1234567890abcdef12"
+        self.checkout_commit = patch("scripts.validate_release.source_commit", return_value=self.full_commit)
+        self.checkout_commit.start()
 
     def tearDown(self):
+        self.checkout_commit.stop()
         self.clean_checkout.stop()
         self.temp_dir.cleanup()
 

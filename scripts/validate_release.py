@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -56,15 +58,51 @@ def authoritative_version() -> str:
     return APP_VERSION
 
 
-def source_commit(root: str | Path = REPO_ROOT) -> str | None:
+FULL_COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
+
+
+def normalize_full_commit(value: object) -> str | None:
+    """Return a normalized full object ID; abbreviated and malformed IDs fail closed."""
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().casefold()
+    return normalized if FULL_COMMIT_PATTERN.fullmatch(normalized) else None
+
+
+def resolve_commit_reference(
+    reference: str,
+    root: str | Path = REPO_ROOT,
+    *,
+    runner: Callable[[tuple[str, ...], Path], subprocess.CompletedProcess] | None = None,
+) -> str | None:
+    """Resolve a ref to one exact commit without invoking a command shell."""
+    if not isinstance(reference, str) or not reference.strip():
+        return None
+    arguments = ("rev-parse", "--verify", "--end-of-options", f"{reference.strip()}^{{commit}}")
     try:
-        completed = subprocess.run(
-            ["git", "rev-parse", "--short=12", "HEAD"], cwd=Path(root), check=True,
-            capture_output=True, text=True, timeout=10,
-        )
+        if runner is None:
+            completed = subprocess.run(
+                ["git", *arguments], cwd=Path(root), check=False,
+                capture_output=True, text=True, timeout=10,
+            )
+        else:
+            completed = runner(arguments, Path(root))
     except (OSError, subprocess.SubprocessError):
         return None
-    return completed.stdout.strip() or None
+    if completed.returncode != 0:
+        return None
+    return normalize_full_commit(completed.stdout)
+
+
+def source_commit(root: str | Path = REPO_ROOT) -> str | None:
+    return resolve_commit_reference("HEAD", root)
+
+
+def commits_match(left: str | None, right: str | None) -> bool:
+    """Compare normalized full commit IDs without repository-dependent abbreviation rules."""
+    normalized_left = normalize_full_commit(left)
+    normalized_right = normalize_full_commit(right)
+    return bool(normalized_left and normalized_left == normalized_right)
 
 
 def working_tree_clean(root: str | Path = REPO_ROOT) -> bool:
@@ -82,7 +120,9 @@ def validate_evidence_identity(evidence: dict, *, expected_commit: str | None = 
                                installer_path: str | Path | None = None) -> dict:
     checks = [
         {"name": "evidence_version", "passed": evidence.get("version") == APP_VERSION},
-        {"name": "evidence_source_commit", "passed": bool(expected_commit) and evidence.get("source_commit") == expected_commit},
+        {"name": "evidence_source_commit", "passed": commits_match(
+            evidence.get("source_commit"), expected_commit
+        )},
     ]
     if installer_path is not None:
         installer = Path(installer_path)
@@ -223,10 +263,7 @@ def validate_release_artifacts(
         {"name": "manifest_exists", "passed": manifest_path.is_file()},
         {"name": "manifest_valid", "passed": bool(manifest_validation["valid"])},
         {"name": "source_commit_matches", "passed": (
-            bool(checkout_commit) and manifest.get("source_commit") == checkout_commit
-        ) or (
-            not require_executables and not require_installer and
-            manifest.get("source_commit") is None and not working_tree_clean()
+            bool(checkout_commit) and commits_match(manifest.get("source_commit"), checkout_commit)
         )},
         {"name": "source_assets_available", "passed": all(item["exists"] and item["contains_files"] for item in source_assets)},
         {"name": "no_prohibited_files", "passed": not prohibited_release_files(root)},
@@ -304,10 +341,18 @@ def generate_release_evidence(
     checkout_commit = globals()["source_commit"]()
     clean = working_tree_clean()
     artifact_evidence = require_executables or require_installer
-    requested_commit = source_commit or (checkout_commit if clean else None)
-    if artifact_evidence and (not clean or not checkout_commit or requested_commit != checkout_commit):
+    requested_commit = None
+    if source_commit is not None:
+        requested_commit = resolve_commit_reference(source_commit)
+    elif clean:
+        requested_commit = checkout_commit
+    if not clean or not checkout_commit or not requested_commit:
+        raise ValueError("Persisted release evidence requires an exact clean current checkout commit.")
+    if artifact_evidence and (not clean or not checkout_commit or not commits_match(requested_commit, checkout_commit)):
         raise ValueError("Artifact evidence requires the exact clean current checkout commit.")
-    if source_commit and (not clean or not checkout_commit or source_commit != checkout_commit):
+    if source_commit is not None and (
+        not clean or not checkout_commit or not commits_match(requested_commit, checkout_commit)
+    ):
         raise ValueError("Finalized evidence source commit must match the clean current checkout exactly.")
     manifest = write_release_manifest(
         root / "release-manifest.json",

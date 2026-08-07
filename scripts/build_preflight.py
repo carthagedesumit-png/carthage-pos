@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 from app.core.version import APP_VERSION, DATABASE_SCHEMA_VERSION, INSTALLER_VERSION
 from app.deployment.runtime_assets import validate_runtime_assets
+from scripts.validate_release import commits_match, resolve_commit_reference
 
 
 PROHIBITED_TRACKED_SUFFIXES = {".db", ".sqlite", ".sqlite3", ".pyc", ".log", ".env"}
@@ -56,23 +57,32 @@ def run_preflight(root: str | Path = ROOT, *, release_dir: str | Path | None = N
     base = Path(root).resolve()
     checks, warnings = [], []
     head = _git("rev-parse", "--short=12", "HEAD", root=base)
-    full_head = _git("rev-parse", "HEAD", root=base)
+    def resolve(reference: str) -> str | None:
+        return resolve_commit_reference(
+            reference, base, runner=lambda args, git_root: _git(*args, root=git_root)
+        )
+
+    full_commit = resolve("HEAD")
     branch = _git("branch", "--show-current", root=base)
     status = _git("status", "--porcelain", "--untracked-files=all", root=base)
     commit = head.stdout.strip() if head.returncode == 0 else None
-    full_commit = full_head.stdout.strip() if full_head.returncode == 0 else None
-    checks.append(_check("git_checkout", head.returncode == branch.returncode == status.returncode == 0,
+    checks.append(_check("git_checkout", (
+        head.returncode == branch.returncode == status.returncode == 0 and bool(full_commit)
+    ),
                          commit=commit, branch=branch.stdout.strip()))
     if expected_branch:
         checks.append(_check("expected_branch", branch.stdout.strip() == expected_branch))
     if expected_commit:
-        checks.append(_check("expected_commit", expected_commit in {commit, full_commit},
+        resolved_expected = resolve(expected_commit)
+        checks.append(_check("expected_commit", commits_match(resolved_expected, full_commit),
                              commit=full_commit))
-    checks.append(_check("clean_working_tree", status.returncode == 0 and not status.stdout.strip()))
+    checkout_clean = status.returncode == 0 and not status.stdout.strip()
+    checks.append(_check("clean_working_tree", checkout_clean))
     checks.append(_check("version_consistency", APP_VERSION == INSTALLER_VERSION,
                          application_version=APP_VERSION, schema_version=DATABASE_SCHEMA_VERSION))
-    if not status.stdout.strip():
-        warnings.append({"name": "source_commit", "status": "resolved", "commit": commit})
+    if checkout_clean and full_commit:
+        warnings.append({"name": "source_commit", "status": "resolved", "commit": full_commit,
+                         "display_commit": commit})
     else:
         warnings.append({"name": "source_commit", "status": "pending-version-promotion-commit"})
     assets = validate_runtime_assets(base)
@@ -138,7 +148,7 @@ def run_preflight(root: str | Path = ROOT, *, release_dir: str | Path | None = N
         try:
             evidence = json.loads(Path(test_evidence).read_text(encoding="utf-8"))
             evidence_valid = (
-                evidence.get("source_commit") == commit
+                commits_match(evidence.get("source_commit"), full_commit)
                 and evidence.get("application_version") == APP_VERSION
                 and evidence.get("status") == "passed"
                 and int(evidence.get("test_total", 0)) > 0

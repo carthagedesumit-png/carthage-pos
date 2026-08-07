@@ -37,7 +37,14 @@ if (-not $Version) {
     throw "Unable to determine authoritative CBOS version."
 }
 
-$Commit = (& git rev-parse --short=12 HEAD).Trim()
+$CommitOutput = & git rev-parse HEAD
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to resolve the full Git commit for HEAD."
+}
+$Commit = ([string]$CommitOutput).Trim()
+if (-not $Commit -or $Commit -cnotmatch '^[0-9a-f]{40}$') {
+    throw "Git returned a malformed full commit for HEAD."
+}
 $BuildRoot = Join-Path $Root "build\rc"
 $ReleaseDir = Join-Path (Join-Path $Root $ReleaseRoot) "CBOS-$Version"
 $VersionFile = Join-Path $BuildRoot "version_info.txt"
