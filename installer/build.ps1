@@ -12,13 +12,17 @@ $Version = (& $Python "scripts\validate_release.py" version).Trim()
 $VersionFile = Join-Path $Root "build\version_info.txt"
 & $Python "scripts\validate_release.py" pyinstaller-version-file $VersionFile | Out-Null
 & $Python -m PyInstaller --version | Out-Null
+$RuntimeAssetJson = & $Python -m app.deployment.runtime_assets --root $Root --format json
+if ($LASTEXITCODE -ne 0) {
+    throw "Runtime asset validation failed before packaging."
+}
+[string[]]$RuntimeAssetArguments = $RuntimeAssetJson | ConvertFrom-Json
 
 $Common = @(
     "--noconfirm", "--clean", "--onedir",
-    "--version-file", $VersionFile,
-    "--add-data", "app\dashboard\templates;app\dashboard\templates",
-    "--add-data", "app\dashboard\static;app\dashboard\static"
+    "--version-file", $VersionFile
 )
+$Common += $RuntimeAssetArguments
 $Icon = "installer\assets\carthage-pos.ico"
 if (Test-Path $Icon) {
     $Common += @("--icon", $Icon)

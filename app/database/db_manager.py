@@ -71,36 +71,51 @@ def execute_migration_script(cursor, script):
 
 
 def initialize_database():
-    """Creates application tables and applies safe SQLite migrations."""
+    """Apply the authoritative migration sequence in one SQLite transaction."""
     with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         cursor = conn.cursor()
-        migrate_users_table(cursor)
-        ensure_system_user(cursor)
-        migrate_stores_and_assignments(cursor)
-        migrate_api_sessions(cursor)
-        migrate_administration_tables(cursor)
-        migrate_checkout_tables(cursor)
-        migrate_hardware_events(cursor)
-        migrate_categories_table(cursor)
-        migrate_suppliers_table(cursor)
-        migrate_products_table(cursor)
-        migrate_barcode_and_label_tables(cursor)
-        migrate_store_inventory(cursor)
-        migrate_stock_transfers(cursor)
-        migrate_stock_movements_table(cursor)
-        migrate_procurement_tables(cursor)
-        migrate_customer_tables(cursor)
-        migrate_sales_table(cursor)
-        migrate_sale_items_table(cursor)
-        migrate_sales_returns_table(cursor)
-        migrate_customer_financial_tables(cursor)
-        migrate_finance_tables(cursor)
-        migrate_pilot_operations_tables(cursor)
-        migrate_pilot_readiness_tables(cursor)
-        migrate_executive_analytics_tables(cursor)
-        migrate_inventory_compatibility(cursor)
+        current_version = int(cursor.execute("PRAGMA user_version").fetchone()[0])
+        if current_version > DATABASE_SCHEMA_VERSION:
+            raise sqlite3.DatabaseError(
+                f"Database schema {current_version} is newer than supported schema "
+                f"{DATABASE_SCHEMA_VERSION}; upgrade CBOS before opening this database."
+            )
+        for _name, migration in authoritative_migrations():
+            migration(cursor)
         cursor.execute(f"PRAGMA user_version = {DATABASE_SCHEMA_VERSION}")
     print("Carthage POS Database Initialized Successfully.")
+
+
+def authoritative_migrations():
+    """Return the single ordered migration registry; order is part of the schema contract."""
+    return (
+        ("users", migrate_users_table),
+        ("system_user", ensure_system_user),
+        ("stores_and_assignments", migrate_stores_and_assignments),
+        ("api_sessions", migrate_api_sessions),
+        ("administration", migrate_administration_tables),
+        ("checkout", migrate_checkout_tables),
+        ("hardware_events", migrate_hardware_events),
+        ("categories", migrate_categories_table),
+        ("suppliers", migrate_suppliers_table),
+        ("products", migrate_products_table),
+        ("barcodes_and_labels", migrate_barcode_and_label_tables),
+        ("store_inventory", migrate_store_inventory),
+        ("stock_transfers", migrate_stock_transfers),
+        ("stock_movements", migrate_stock_movements_table),
+        ("procurement", migrate_procurement_tables),
+        ("customers", migrate_customer_tables),
+        ("sales", migrate_sales_table),
+        ("sale_items", migrate_sale_items_table),
+        ("sales_returns", migrate_sales_returns_table),
+        ("customer_financial", migrate_customer_financial_tables),
+        ("finance", migrate_finance_tables),
+        ("pilot_operations", migrate_pilot_operations_tables),
+        ("pilot_readiness_and_data", migrate_pilot_readiness_tables),
+        ("executive_analytics", migrate_executive_analytics_tables),
+        ("inventory_compatibility", migrate_inventory_compatibility),
+    )
 
 def migrate_pilot_readiness_tables(cursor):
     """Additive, idempotent pilot controls; no operational rows are modified."""
@@ -461,9 +476,9 @@ def migrate_users_table(cursor):
     select_home_store = "home_store_id" if "home_store_id" in legacy_columns else "NULL"
     cursor.execute(f"""
         INSERT OR IGNORE INTO users (
-            username, password_hash, full_name, role, is_active, created_at, last_login, home_store_id
+            id, username, password_hash, full_name, role, is_active, created_at, last_login, home_store_id
         )
-        SELECT username, password_hash, {select_full_name}, {select_role}, {select_is_active},
+        SELECT id, username, password_hash, {select_full_name}, {select_role}, {select_is_active},
                {select_created_at}, {select_last_login}, {select_home_store}
         FROM users_legacy
         WHERE username IS NOT NULL AND password_hash IS NOT NULL

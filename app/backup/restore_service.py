@@ -104,6 +104,37 @@ def restore_latest(session, *, dry_run: bool = True, confirmation: str | None = 
     return restore_backup(session, use_latest=True, dry_run=dry_run, confirmation=confirmation)
 
 
+def restore_backup_copy(session, backup_id: str, destination: str | Path) -> dict:
+    """Restore a verified backup to a new rehearsal file without migrating or overwriting."""
+    session = require_backup_admin(session)
+    metadata = read_manifest(backup_id)
+    verification = verify_backup(session, metadata["backup_id"])
+    if not verification["valid"]:
+        raise RestoreError("Backup verification failed; rehearsal restore was not attempted.")
+    target = Path(destination).resolve()
+    active = Path(get_database_path()).resolve()
+    if target == active:
+        raise RestoreError("A rehearsal restore cannot target the active database.")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with target.open("xb") as output, materialize_database(metadata) as candidate:
+            with candidate.open("rb") as source:
+                shutil.copyfileobj(source, output)
+        _validate_stage(target)
+    except FileExistsError as exc:
+        raise RestoreError("A rehearsal restore cannot overwrite an existing file.") from exc
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    return {
+        "restored": True,
+        "backup_id": metadata["backup_id"],
+        "destination": str(target),
+        "migrated": False,
+        "verification": verification,
+    }
+
+
 def restore_confirmation(backup_id: str) -> str:
     return f"RESTORE:{backup_id}"
 

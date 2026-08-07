@@ -159,7 +159,18 @@ Schema changes are idempotent functions in `app/database/db_manager.py` and run
 through `initialize_database()`. A migration must preserve historical records,
 use additive changes where possible, backfill deterministic values, and be
 covered by a legacy-schema test. Never perform schema migration from a domain
-service. Barcode migrations add `product_identifiers`, `barcode_audit`,
+service.
+
+`app.database.db_manager.authoritative_migrations()` is the sole ordered schema
+registry. Its order is dependency order: identity, stores/sessions, operational
+tables, inventory/procurement, sales/payments/refunds, finance, pilot data, and
+analytics/compatibility. Startup begins one `BEGIN IMMEDIATE` transaction, rejects
+a `PRAGMA user_version` newer than this source, applies every additive/idempotent
+migration, and advances `user_version` only after the registry succeeds. SQL
+scripts are split with `sqlite3.complete_statement()`; `executescript()` is not
+permitted because it can disrupt the surrounding transaction. A failed migration
+therefore rolls back its schema, seeds, indexes, and version marker together.
+Barcode migrations add `product_identifiers`, `barcode_audit`,
 `label_print_jobs`, and `label_print_items`, plus additive `unit` and
 `promotion_price` product fields. Existing barcodes are safely backfilled.
 Backup compatibility uses SQLite `PRAGMA user_version`; backup artifacts and

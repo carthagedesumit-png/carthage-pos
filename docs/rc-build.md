@@ -26,6 +26,42 @@ Current RC:
 1.0.0-rc.1
 ```
 
+## Source-only preflight
+
+Before a future build, create canonical-suite evidence in an isolated directory
+for the exact 12-character source commit, then run:
+
+```powershell
+python .\scripts\build_preflight.py --release-dir .\release\CBOS-1.0.0-rc.1 --test-evidence <isolated-test-evidence.json>
+```
+
+The evidence JSON contains `source_commit`, `application_version`, `status` set
+to `passed`, and a positive `test_total`. Preflight is read-only: it checks Git,
+versions, source compilation, tracked prohibited artifacts, obvious secrets, the
+runtime asset manifest, tool discovery, destination safety, and pending physical
+gates. It neither installs tools nor invokes PyInstaller or Inno Setup. A missing
+PyInstaller or Inno Setup installation is reported as an optional-tool warning;
+dirty source, stale test evidence, missing runtime assets, or an existing release
+destination are blockers.
+
+The runtime data authority is `app/deployment/runtime_assets.py`. Both PowerShell
+build entry points call its JSON argument generator before PyInstaller and append
+the returned `--add-data` and `--hidden-import` arguments. The same manifest is
+used by preflight and release validation. A missing required file or directory
+therefore stops the build before packaging. PyInstaller collects both dashboard
+template and static directories plus `app.operations.pilot_data_service`.
+Documentation CSV templates under
+`docs/pilot-data` are operator aids and are intentionally not runtime payload.
+
+Source evidence, package evidence, installer evidence, clean-PC acceptance,
+peripheral acceptance, and pilot go-live approval are distinct gates. Source-only
+validation can never mark the latter five as passed. When the designated desktop
+is available: verify the clean checkout and tools, run preflight, execute the
+documented build command once into a new release directory, validate package and
+installer evidence, install on the clean PC, execute `docs/windows-acceptance.md`,
+record real peripheral results, and obtain named human go-live approval. Until
+those steps occur this RC is not production-ready.
+
 Do not edit `installer/version_info.txt` or `installer/carthage-pos.iss` to set
 the RC version. The build scripts generate or pass version metadata at build
 time.

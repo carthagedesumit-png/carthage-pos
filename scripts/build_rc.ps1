@@ -53,8 +53,11 @@ Invoke-Native "Whitespace validation" "git" @("diff", "--check")
 Invoke-Native "PyInstaller version metadata generation" $Python @("scripts\validate_release.py", "pyinstaller-version-file", $VersionFile)
 Invoke-Native "PyInstaller prerequisite check" $Python @("-m", "PyInstaller", "--version")
 
-$DashboardTemplates = (Resolve-Path "app\dashboard\templates").Path
-$DashboardStatic = (Resolve-Path "app\dashboard\static").Path
+$RuntimeAssetJson = & $Python -m app.deployment.runtime_assets --root $Root --format json
+if ($LASTEXITCODE -ne 0) {
+    throw "Runtime asset validation failed before packaging."
+}
+[string[]]$RuntimeAssetArguments = $RuntimeAssetJson | ConvertFrom-Json
 $MainEntry = (Resolve-Path "main.py").Path
 $DeploymentEntry = (Resolve-Path "deployment_cli.py").Path
 $UpgradeVerifierEntry = (Resolve-Path "upgrade_verifier_cli.py").Path
@@ -64,10 +67,9 @@ $Common = @(
     "--version-file", $VersionFile,
     "--distpath", $ReleaseDir,
     "--workpath", $PyInstallerWork,
-    "--specpath", $BuildRoot,
-    "--add-data", "$DashboardTemplates;app\dashboard\templates",
-    "--add-data", "$DashboardStatic;app\dashboard\static"
+    "--specpath", $BuildRoot
 )
+$Common += $RuntimeAssetArguments
 
 $Icon = "installer\assets\carthage-pos.ico"
 if (Test-Path $Icon) {
@@ -88,8 +90,6 @@ $DeploymentPayload = Join-Path $ReleaseDir "CarthagePOSDeployment"
 $AppExe = Join-Path $AppPayload "CarthagePOS.exe"
 $DeploymentExe = Join-Path $DeploymentPayload "CarthagePOSDeployment.exe"
 $UpgradeVerifierExe = Join-Path $ReleaseDir "CarthagePOSUpgradeVerifier.exe"
-$PackagedTemplates = Join-Path $AppPayload "_internal\app\dashboard\templates"
-$PackagedStatic = Join-Path $AppPayload "_internal\app\dashboard\static"
 
 if (-not (Test-Path $AppExe)) {
     throw "PyInstaller did not produce $AppExe."
@@ -103,13 +103,6 @@ if (-not (Test-Path $UpgradeVerifierExe)) {
 Invoke-Native "Packaged upgrade verifier acceptance" $Python @(
     "scripts\verify_packaged_upgrade.py", $UpgradeVerifierExe
 )
-if (-not (Test-Path $PackagedTemplates)) {
-    throw "Packaged dashboard templates were not found: $PackagedTemplates"
-}
-if (-not (Test-Path $PackagedStatic)) {
-    throw "Packaged dashboard static assets were not found: $PackagedStatic"
-}
-
 $InstallerBuilt = $false
 if (-not $SkipInstaller) {
     if (-not (Test-Path $InnoSetupCompiler)) {
