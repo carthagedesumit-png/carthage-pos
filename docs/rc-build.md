@@ -32,7 +32,7 @@ Before a future build, create canonical-suite evidence in an isolated directory
 for the exact 12-character source commit, then run:
 
 ```powershell
-python .\scripts\build_preflight.py --release-dir .\release\CBOS-1.0.0-rc.2 --test-evidence <isolated-test-evidence.json>
+python .\scripts\build_preflight.py --release-dir .\release\CBOS-1.0.0-rc.2 --test-evidence <isolated-test-evidence.json> [--iscc "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"]
 ```
 
 The evidence JSON contains `source_commit`, `application_version`, `status` set
@@ -43,6 +43,10 @@ gates. It neither installs tools nor invokes PyInstaller or Inno Setup. A missin
 PyInstaller or Inno Setup installation is reported as an optional-tool warning;
 dirty source, stale test evidence, missing runtime assets, or an existing release
 destination are blockers.
+
+Inno Setup discovery accepts `--iscc`, then checks PATH and the standard Inno
+Setup 6 directories below `ProgramFiles(x86)` and `ProgramFiles`. The explicit
+parameter is useful for a nonstandard installation and safely supports spaces.
 
 The runtime data authority is `app/deployment/runtime_assets.py`. Both PowerShell
 build entry points call its JSON argument generator before PyInstaller and append

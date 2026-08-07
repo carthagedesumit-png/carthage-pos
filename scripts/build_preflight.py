@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -26,25 +27,47 @@ SECRET_PATTERN = re.compile(
 )
 
 
+def discover_iscc(explicit_path: str | Path | None = None) -> Path | None:
+    """Locate Inno Setup without compiling an installer or searching the disk."""
+    candidates: list[Path] = []
+    if explicit_path:
+        candidates.append(Path(explicit_path).expanduser())
+    on_path = shutil.which("ISCC.exe") or shutil.which("iscc")
+    if on_path:
+        candidates.append(Path(on_path))
+    for variable in ("ProgramFiles(x86)", "ProgramFiles"):
+        program_files = os.environ.get(variable)
+        if program_files:
+            candidates.append(Path(program_files) / "Inno Setup 6" / "ISCC.exe")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
 def _git(*args: str, root: Path) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=15)
 
 
 def run_preflight(root: str | Path = ROOT, *, release_dir: str | Path | None = None,
                   test_evidence: str | Path | None = None, expected_branch: str | None = None,
-                  expected_commit: str | None = None) -> dict:
+                  expected_commit: str | None = None,
+                  iscc_path: str | Path | None = None) -> dict:
     base = Path(root).resolve()
     checks, warnings = [], []
     head = _git("rev-parse", "--short=12", "HEAD", root=base)
+    full_head = _git("rev-parse", "HEAD", root=base)
     branch = _git("branch", "--show-current", root=base)
     status = _git("status", "--porcelain", "--untracked-files=all", root=base)
     commit = head.stdout.strip() if head.returncode == 0 else None
+    full_commit = full_head.stdout.strip() if full_head.returncode == 0 else None
     checks.append(_check("git_checkout", head.returncode == branch.returncode == status.returncode == 0,
                          commit=commit, branch=branch.stdout.strip()))
     if expected_branch:
         checks.append(_check("expected_branch", branch.stdout.strip() == expected_branch))
     if expected_commit:
-        checks.append(_check("expected_commit", commit == expected_commit))
+        checks.append(_check("expected_commit", expected_commit in {commit, full_commit},
+                             commit=full_commit))
     checks.append(_check("clean_working_tree", status.returncode == 0 and not status.stdout.strip()))
     checks.append(_check("version_consistency", APP_VERSION == INSTALLER_VERSION,
                          application_version=APP_VERSION, schema_version=DATABASE_SCHEMA_VERSION))
@@ -101,8 +124,9 @@ def run_preflight(root: str | Path = ROOT, *, release_dir: str | Path | None = N
         )
         warnings.append({"name": "pyinstaller", "status": "available",
                          "version": version.stdout.strip() or "unknown"})
-    iscc = shutil.which("ISCC.exe")
-    warnings.append({"name": "inno_setup", "status": "available" if iscc else "optional-tool-missing"})
+    iscc = discover_iscc(iscc_path)
+    warnings.append({"name": "inno_setup", "status": "available" if iscc else "optional-tool-missing",
+                     **({"path": str(iscc)} if iscc else {})})
 
     if release_dir:
         destination = Path(release_dir).resolve()
@@ -145,10 +169,12 @@ def main(argv=None) -> int:
     parser.add_argument("--test-evidence")
     parser.add_argument("--expected-branch")
     parser.add_argument("--expected-commit")
+    parser.add_argument("--iscc")
     args = parser.parse_args(argv)
     result = run_preflight(
         args.root, release_dir=args.release_dir, test_evidence=args.test_evidence,
         expected_branch=args.expected_branch, expected_commit=args.expected_commit,
+        iscc_path=args.iscc,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["valid"] else 1

@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from contextlib import closing
@@ -218,6 +219,26 @@ class ReleasePreparationTestCase(unittest.TestCase):
         self.assertFalse(checks["clean_working_tree"]["passed"])
         self.assertFalse(checks["canonical_tests_same_commit"]["passed"])
         self.assertIn("physically-unverified", {item["status"] for item in result["warnings"]})
+
+    def test_inno_discovery_uses_explicit_and_standard_paths_without_path_dependency(self):
+        from scripts.build_preflight import discover_iscc
+        with tempfile.TemporaryDirectory() as directory:
+            compiler = Path(directory) / "Inno Setup 6" / "ISCC.exe"
+            compiler.parent.mkdir()
+            compiler.touch()
+            with patch("scripts.build_preflight.shutil.which", return_value=None), patch.dict(
+                    "scripts.build_preflight.os.environ", {"ProgramFiles(x86)": directory}, clear=True):
+                self.assertEqual(discover_iscc(), compiler.resolve())
+                self.assertEqual(discover_iscc(compiler), compiler.resolve())
+
+    def test_preflight_accepts_full_expected_commit(self):
+        from scripts.build_preflight import run_preflight
+        full_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        result = run_preflight(Path.cwd(), expected_commit=full_commit)
+        check = next(item for item in result["checks"] if item["name"] == "expected_commit")
+        self.assertTrue(check["passed"], check)
 
 
 if __name__ == "__main__":
