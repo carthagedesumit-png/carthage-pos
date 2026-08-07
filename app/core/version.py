@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 import re
 
 
-APP_VERSION = "1.0.0-rc.1"
+APP_VERSION = "1.0.0-rc.2"
 DATABASE_SCHEMA_VERSION = 1
 MIGRATION_VERSION = 1
 API_VERSION = "1.0"

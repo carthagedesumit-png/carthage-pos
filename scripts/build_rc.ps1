@@ -11,6 +11,11 @@ Set-StrictMode -Version Latest
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $Root
 
+$Dirty = (& git status --porcelain --untracked-files=all)
+if ($LASTEXITCODE -ne 0 -or $Dirty) {
+    throw "RC builds require a clean committed working tree. Commit the version promotion, rerun canonical tests and build preflight, then build from that exact commit."
+}
+
 function Invoke-Native {
     param(
         [Parameter(Mandatory = $true)]

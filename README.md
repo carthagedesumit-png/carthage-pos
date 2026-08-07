@@ -30,7 +30,7 @@ consistent.
 
 ## Version 1.0 RC Build And Windows Acceptance
 
-The current release candidate is `1.0.0-rc.1`. The RC build flow produces
+The current release candidate is `1.0.0-rc.2`. The RC build flow produces
 versioned Windows artifacts, manifest/checksum validation, packaged dashboard
 asset checks, and a release evidence bundle for pilot acceptance.
 

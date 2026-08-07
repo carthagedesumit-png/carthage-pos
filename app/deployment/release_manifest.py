@@ -26,11 +26,14 @@ def build_release_manifest(
     channel: str | None = None,
     build_timestamp: str | None = None,
     source_commit: str | None = None,
+    resolve_source_commit: bool = True,
     package_paths: list[str | Path] | None = None,
 ) -> dict:
     channel = _release_channel(channel)
     timestamp = build_timestamp or datetime.now(timezone.utc).isoformat()
-    commit = source_commit or _source_commit()
+    commit = source_commit if source_commit is not None else (
+        _source_commit() if resolve_source_commit else None
+    )
     packages = [_package_metadata(Path(path)) for path in package_paths or []]
     return {
         "format_version": 1,

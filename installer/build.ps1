@@ -8,6 +8,11 @@ $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $Root
 
+$Dirty = (& git status --porcelain --untracked-files=all)
+if ($LASTEXITCODE -ne 0 -or $Dirty) {
+    throw "Packaging requires a clean committed working tree. Commit the version promotion and rerun preflight first."
+}
+
 $Version = (& $Python "scripts\validate_release.py" version).Trim()
 $VersionFile = Join-Path $Root "build\version_info.txt"
 & $Python "scripts\validate_release.py" pyinstaller-version-file $VersionFile | Out-Null

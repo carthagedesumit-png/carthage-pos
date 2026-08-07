@@ -169,6 +169,7 @@ class ReleasePreparationTestCase(unittest.TestCase):
             content = script.read_text(encoding="utf-8")
             self.assertIn("app.deployment.runtime_assets", content)
             self.assertNotIn("--add-data", content)
+            self.assertIn("git status --porcelain", content)
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(FileNotFoundError):
                 pyinstaller_arguments(directory)
@@ -176,14 +177,38 @@ class ReleasePreparationTestCase(unittest.TestCase):
     def test_source_evidence_binds_commit_and_cannot_satisfy_physical_gates(self):
         from scripts.validate_release import generate_release_evidence, source_commit
         with tempfile.TemporaryDirectory() as directory:
-            evidence = generate_release_evidence(directory, source_commit=source_commit())
+            release_dir = Path(directory) / "CBOS-1.0.0-rc.2"
+            evidence = generate_release_evidence(release_dir)
             self.assertEqual(evidence["build_type"], "source-only")
+            self.assertIsNone(evidence["source_commit"])
+            self.assertIsNone(evidence["release_manifest"]["source_commit"])
             self.assertEqual(evidence["gate_status"]["source_validation"], "passed")
             self.assertEqual(evidence["gate_status"]["installer_validation"], "not-run")
             self.assertEqual(evidence["gate_status"]["clean_pc_acceptance"], "physically-unverified")
             self.assertNotIn(str(Path(directory)), json.dumps(evidence))
             with self.assertRaises(ValueError):
-                generate_release_evidence(directory, source_commit="000000000000")
+                generate_release_evidence(release_dir, source_commit="000000000000")
+
+    def test_rc2_identity_rejects_stale_or_mismatched_evidence(self):
+        from scripts.validate_release import validate_evidence_identity
+        expected_commit = "abcdef123456"
+        stale = {"version": "1.0.0-rc.1", "source_commit": expected_commit}
+        wrong_commit = {"version": "1.0.0-rc.2", "source_commit": "000000000000"}
+        self.assertFalse(validate_evidence_identity(stale, expected_commit=expected_commit)["valid"])
+        self.assertFalse(validate_evidence_identity(wrong_commit, expected_commit=expected_commit)["valid"])
+
+    def test_historical_rc1_reference_is_preserved(self):
+        from app.core.version import APP_VERSION, compare_versions
+        self.assertEqual(APP_VERSION, "1.0.0-rc.2")
+        self.assertLess(compare_versions("1.0.0-rc.1", APP_VERSION), 0)
+
+    def test_installer_upgrade_identity_and_rc2_paths_are_stable(self):
+        from scripts.validate_release import expected_installer_filename, expected_release_directory
+        script = Path("installer/carthage-pos.iss").read_text(encoding="utf-8")
+        self.assertIn("AppId={{9A81751F-18D8-4B90-9237-9B79845CB945}", script)
+        self.assertIn("OutputBaseFilename=CBOS-Setup-{#MyAppVersion}", script)
+        self.assertEqual(expected_installer_filename(), "CBOS-Setup-1.0.0-rc.2.exe")
+        self.assertEqual(expected_release_directory(), "CBOS-1.0.0-rc.2")
 
     def test_preflight_reports_dirty_tree_test_evidence_and_physical_gates(self):
         from scripts.build_preflight import run_preflight

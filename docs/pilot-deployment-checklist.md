@@ -1,6 +1,6 @@
 # Controlled Pilot Acceptance Checklist
 
-Release candidate: `1.0.0-rc.1`. Physical evidence must come from the designated clean Windows 11 PC and real devices. Never infer a pass from mocks. Use `PASS`, `FAIL`, or `BLOCKED`; all rows below remain `BLOCKED / physically unverified` until executed.
+Release candidate: `1.0.0-rc.2`. Physical evidence must come from the designated clean Windows 11 PC and real devices. Never infer a pass from mocks. Use `PASS`, `FAIL`, or `BLOCKED`; all rows below remain `BLOCKED / physically unverified` until executed.
 
 For every row record: responsible tester, execution date, status, evidence file/reference, and defect reference (or `none`). Evidence must omit passwords, tokens, payment secrets, and customer data.
 

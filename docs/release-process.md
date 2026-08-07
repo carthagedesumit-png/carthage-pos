@@ -25,7 +25,7 @@ Build v1.0 release candidates with:
 .\scripts\build_rc.ps1
 ```
 
-The command derives `1.0.0-rc.1` from `app.core.version`, generates
+The command derives `1.0.0-rc.2` from `app.core.version`, generates
 PyInstaller version metadata, validates whitespace, runs the unit suite,
 packages required dashboard assets, writes checksums, creates
 `release-manifest.json`, and emits a release evidence bundle. The Inno Setup

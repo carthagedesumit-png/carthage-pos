@@ -11,7 +11,7 @@ business data. It is a release gate for controlled pilot deployment.
 Run artifact validation before installing:
 
 ```powershell
-.\scripts\windows_acceptance.ps1 -ReleaseDir .\release\CBOS-1.0.0-rc.1 -SkipHttpChecks
+.\scripts\windows_acceptance.ps1 -ReleaseDir .\release\CBOS-1.0.0-rc.2 -SkipHttpChecks
 ```
 
 After CBOS is running locally, repeat without `-SkipHttpChecks` to validate

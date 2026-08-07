@@ -48,6 +48,10 @@ def run_preflight(root: str | Path = ROOT, *, release_dir: str | Path | None = N
     checks.append(_check("clean_working_tree", status.returncode == 0 and not status.stdout.strip()))
     checks.append(_check("version_consistency", APP_VERSION == INSTALLER_VERSION,
                          application_version=APP_VERSION, schema_version=DATABASE_SCHEMA_VERSION))
+    if not status.stdout.strip():
+        warnings.append({"name": "source_commit", "status": "resolved", "commit": commit})
+    else:
+        warnings.append({"name": "source_commit", "status": "pending-version-promotion-commit"})
     assets = validate_runtime_assets(base)
     checks.append(_check("runtime_asset_manifest", assets["valid"], details=assets["checks"]))
 
@@ -119,6 +123,9 @@ def run_preflight(root: str | Path = ROOT, *, release_dir: str | Path | None = N
             evidence_valid = False
     checks.append(_check("canonical_tests_same_commit", evidence_valid))
     warnings.extend([
+        {"name": "executable_build", "status": "pending"},
+        {"name": "installer_build", "status": "pending"},
+        {"name": "local_windows_acceptance", "status": "physically-unverified"},
         {"name": "clean_pc_acceptance", "status": "physically-unverified"},
         {"name": "peripheral_acceptance", "status": "physically-unverified"},
         {"name": "pilot_go_live_approval", "status": "not-run"},

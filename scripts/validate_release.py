@@ -44,6 +44,14 @@ EVIDENCE_FILES = {
 }
 
 
+def expected_release_directory(version: str = APP_VERSION) -> str:
+    return f"CBOS-{version}"
+
+
+def expected_installer_filename(version: str = APP_VERSION) -> str:
+    return f"CBOS-Setup-{version}.exe"
+
+
 def authoritative_version() -> str:
     return APP_VERSION
 
@@ -57,6 +65,33 @@ def source_commit(root: str | Path = REPO_ROOT) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return completed.stdout.strip() or None
+
+
+def working_tree_clean(root: str | Path = REPO_ROOT) -> bool:
+    try:
+        completed = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"], cwd=Path(root), check=True,
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return not completed.stdout.strip()
+
+
+def validate_evidence_identity(evidence: dict, *, expected_commit: str | None = None,
+                               installer_path: str | Path | None = None) -> dict:
+    checks = [
+        {"name": "evidence_version", "passed": evidence.get("version") == APP_VERSION},
+        {"name": "evidence_source_commit", "passed": bool(expected_commit) and evidence.get("source_commit") == expected_commit},
+    ]
+    if installer_path is not None:
+        installer = Path(installer_path)
+        recorded = evidence.get("installer") or {}
+        checks.extend([
+            {"name": "evidence_installer_filename", "passed": installer.name == expected_installer_filename() and recorded.get("filename") == installer.name},
+            {"name": "evidence_installer_checksum", "passed": installer.is_file() and bool(recorded.get("sha256")) and recorded.get("sha256") == sha256_file(installer)},
+        ])
+    return {"valid": all(item["passed"] for item in checks), "checks": checks}
 
 
 def numeric_windows_version(version: str = APP_VERSION) -> tuple[int, int, int, int]:
@@ -183,10 +218,16 @@ def validate_release_artifacts(
     packaged_assets = packaged_asset_checks(root)
     checks = [
         {"name": "release_directory_exists", "passed": root.is_dir()},
+        {"name": "release_directory_name", "passed": root.name == expected_release_directory()},
         {"name": "authoritative_application_version", "passed": APP_VERSION == INSTALLER_VERSION},
         {"name": "manifest_exists", "passed": manifest_path.is_file()},
         {"name": "manifest_valid", "passed": bool(manifest_validation["valid"])},
-        {"name": "source_commit_matches", "passed": bool(checkout_commit) and manifest.get("source_commit") == checkout_commit},
+        {"name": "source_commit_matches", "passed": (
+            bool(checkout_commit) and manifest.get("source_commit") == checkout_commit
+        ) or (
+            not require_executables and not require_installer and
+            manifest.get("source_commit") is None and not working_tree_clean()
+        )},
         {"name": "source_assets_available", "passed": all(item["exists"] and item["contains_files"] for item in source_assets)},
         {"name": "no_prohibited_files", "passed": not prohibited_release_files(root)},
     ]
@@ -206,7 +247,9 @@ def validate_release_artifacts(
         ]
         checks.append({
             "name": "installer_exists",
-            "passed": any((root / item["path"]).is_file() and item.get("size", 0) > 0 for item in installers),
+            "passed": any(item["name"] == expected_installer_filename() and
+                          (root / item["path"]).is_file() and item.get("size", 0) > 0
+                          for item in installers),
         })
     checksum_result = validate_checksums(root)
     checksum_applicable = require_executables or any(
@@ -259,13 +302,18 @@ def generate_release_evidence(
     evidence_root.mkdir(parents=True, exist_ok=True)
     package_paths = [root / item["path"] for item in artifact_inventory(root) if item["name"] not in EVIDENCE_FILES]
     checkout_commit = globals()["source_commit"]()
-    requested_commit = source_commit or checkout_commit
-    if not checkout_commit or requested_commit != checkout_commit:
-        raise ValueError("Evidence source commit must match the current checkout exactly.")
+    clean = working_tree_clean()
+    artifact_evidence = require_executables or require_installer
+    requested_commit = source_commit or (checkout_commit if clean else None)
+    if artifact_evidence and (not clean or not checkout_commit or requested_commit != checkout_commit):
+        raise ValueError("Artifact evidence requires the exact clean current checkout commit.")
+    if source_commit and (not clean or not checkout_commit or source_commit != checkout_commit):
+        raise ValueError("Finalized evidence source commit must match the clean current checkout exactly.")
     manifest = write_release_manifest(
         root / "release-manifest.json",
         channel="rc",
-        source_commit=checkout_commit,
+        source_commit=requested_commit,
+        resolve_source_commit=requested_commit is not None,
         package_paths=package_paths,
     )
     write_checksums(root)
@@ -282,16 +330,22 @@ def generate_release_evidence(
         "build_type": "installer" if require_installer else (
             "package" if require_executables else "source-only"
         ),
-        "source_commit": checkout_commit,
+        "source_commit": requested_commit,
         "schema_version": DATABASE_SCHEMA_VERSION,
         "gate_status": {
+            "source_finalized": "passed",
             "source_validation": "passed" if validation["valid"] else "failed",
+            "version_promotion_commit": "created" if requested_commit else "pending",
             "package_validation": "passed" if require_executables and validation["valid"] else "not-run",
             "installer_validation": "passed" if require_installer and validation["valid"] else "not-run",
+            "executable_build": "complete" if require_executables and validation["valid"] else "pending",
+            "installer_build": "complete" if require_installer and validation["valid"] else "pending",
+            "local_windows_acceptance": "physically-unverified",
             "clean_pc_acceptance": "physically-unverified",
             "peripheral_acceptance": "physically-unverified",
             "pilot_go_live_approval": "not-run",
         },
+        "installer": None,
         "release_directory": "<isolated-release-directory>",
         "release_manifest": manifest,
         "validation": validation,

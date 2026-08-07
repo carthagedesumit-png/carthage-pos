@@ -23,7 +23,7 @@ PyInstaller metadata derive from that source.
 Current RC:
 
 ```text
-1.0.0-rc.1
+1.0.0-rc.2
 ```
 
 ## Source-only preflight
@@ -32,7 +32,7 @@ Before a future build, create canonical-suite evidence in an isolated directory
 for the exact 12-character source commit, then run:
 
 ```powershell
-python .\scripts\build_preflight.py --release-dir .\release\CBOS-1.0.0-rc.1 --test-evidence <isolated-test-evidence.json>
+python .\scripts\build_preflight.py --release-dir .\release\CBOS-1.0.0-rc.2 --test-evidence <isolated-test-evidence.json>
 ```
 
 The evidence JSON contains `source_commit`, `application_version`, `status` set
@@ -95,13 +95,13 @@ The release directory contains packaged executables, optional installer output,
 Validate an existing release directory:
 
 ```powershell
-python .\scripts\validate_release.py validate --release-dir .\release\CBOS-1.0.0-rc.1 --require-executables
+python .\scripts\validate_release.py validate --release-dir .\release\CBOS-1.0.0-rc.2 --require-executables --require-installer
 ```
 
 Generate or refresh release evidence:
 
 ```powershell
-python .\scripts\validate_release.py evidence --release-dir .\release\CBOS-1.0.0-rc.1 --require-executables
+python .\scripts\validate_release.py evidence --release-dir .\release\CBOS-1.0.0-rc.2 --require-executables --require-installer
 ```
 
 The validator checks:
@@ -117,3 +117,23 @@ The validator checks:
 
 Do not report installer success unless the Inno Setup compiler actually builds
 the setup artifact.
+
+## Exact post-commit RC2 sequence
+
+After committing this promotion (outside this milestone), bind every command and evidence file to that clean commit:
+
+```powershell
+git status --short --branch
+$Commit = (git rev-parse --short=12 HEAD).Trim()
+git rev-list --left-right --count 'HEAD...@{u}'
+python -m unittest discover -s tests -q
+# Write isolated test evidence with application_version=1.0.0-rc.2, source_commit=$Commit, status=passed, and the real test_total.
+python .\scripts\build_preflight.py --expected-branch feature/reporting-engine --expected-commit $Commit --release-dir .\release\CBOS-1.0.0-rc.2 --test-evidence <isolated-test-evidence.json>
+.\scripts\build_rc.ps1
+python .\scripts\validate_release.py validate --release-dir .\release\CBOS-1.0.0-rc.2 --require-executables --require-installer
+python .\scripts\validate_release.py evidence --release-dir .\release\CBOS-1.0.0-rc.2 --source-commit $Commit --require-executables --require-installer
+Get-FileHash .\release\CBOS-1.0.0-rc.2\installer\CBOS-Setup-1.0.0-rc.2.exe -Algorithm SHA256
+.\scripts\windows_acceptance.ps1 -ReleaseDir .\release\CBOS-1.0.0-rc.2
+```
+
+Record the local Windows result separately. Leave clean-PC, printer, scanner, cash-drawer, broader peripheral, and human pilot approval gates pending until physically executed. If same-commit canonical test evidence already exists, validate its commit, version, passed status, and positive total instead of rerunning tests.
