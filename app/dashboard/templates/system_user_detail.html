@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{% if not detail %}
+<section class="hero">
+    <div>
+        <h1>User Not Found</h1>
+        <p>No user record is available for ID {{ user_id }}.</p>
+        <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <a class="hero-link" href="/dashboard/system/users">Back to Users</a>
+        {% if can_edit %}<a class="hero-link" href="/dashboard/system/users/{{ user_id }}/edit">Edit User</a>{% endif %}
+    </div>
+</section>
+{% if success %}<div class="alert success" role="status">{{ success }}</div>{% endif %}{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% else %}
+<section class="hero">
+    <div>
+        <h1>{{ detail.user.username }}</h1>
+        <p>{{ detail.user.full_name }} &middot; {{ detail.user.role }} &middot; {{ detail.user.active_status.title() }}</p>
+        <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <a class="hero-link" href="/dashboard/system/users">Back to Users</a>
+    </div>
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>User Profile</h2>
+        <div class="detail-list">
+            <span>Username <strong>{{ detail.user.username }}</strong></span>
+            <span>Full Name <strong>{{ detail.user.full_name }}</strong></span>
+            <span>Role <strong>{{ detail.user.role }}</strong></span>
+            <span>Email <strong>{{ detail.user.email or "Not set" }}</strong></span>
+            <span>Status <strong>{{ detail.user.active_status.title() }}</strong></span>
+            <span>Lock status <strong>{{ "Locked" if detail.user.is_locked else "Unlocked" }}</strong></span>
+            <span>Failed logins <strong>{{ detail.user.failed_login_count }}</strong></span>
+            <span>Force password change <strong>{{ "Yes" if detail.user.force_password_change else "No" }}</strong></span>
+            <span>Created <strong>{{ detail.user.created_at or "Unknown" }}</strong></span>
+            <span>Last Login <strong>{{ detail.user.last_login or "Never" }}</strong></span>
+        </div>
+    </div>
+    <div class="panel">
+        <h2>Store Access</h2>
+        <div class="detail-list">
+            <span>Home Store <strong>{{ detail.user.home_store or "No store" }}</strong></span>
+            <span>Assigned Stores <strong>{% if detail.user.stores %}{{ detail.user.stores|map(attribute='name')|join(', ') }}{% else %}All stores{% endif %}</strong></span>
+        </div>
+    </div>
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>User Activity</h2>
+        {% if detail.activity %}
+        <div class="detail-list">
+            {% for item in detail.activity %}
+            <span>{{ item.event_type }} <strong>{{ item.created_at }}</strong></span>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No user activity is available.</p>
+        {% endif %}
+    </div>
+    <div class="panel">
+        <h2>Effective Permissions</h2><div class="detail-list">{% for permission in detail.permissions %}<span><strong>{{ permission }}</strong></span>{% endfor %}</div>
+    </div>
+</section>
+{% if can_edit %}<section class="dashboard-grid detail-grid"><div class="panel"><h2>Account Actions</h2><a class="primary-action" href="/dashboard/system/users/{{ user_id }}/password">Reset Password</a><details><summary>{{ 'Unlock' if detail.user.is_locked else 'Lock' }} account</summary><form method="post" action="/dashboard/system/users/{{ user_id }}/lock?csrf_token={{ csrf_token }}"><input type="hidden" name="locked" value="{{ 'false' if detail.user.is_locked else 'true' }}"><label class="confirmation-check"><input type="checkbox" required><span>Confirm account lock change</span></label><button type="submit">Confirm</button></form></details><details><summary>{{ 'Activate' if not detail.user.is_active else 'Deactivate' }} account</summary><form method="post" action="/dashboard/system/users/{{ user_id }}/lifecycle?csrf_token={{ csrf_token }}"><input type="hidden" name="active" value="{{ 'true' if not detail.user.is_active else 'false' }}"><label class="confirmation-check"><input type="checkbox" required><span>Confirm lifecycle change</span></label><button type="submit">Confirm</button></form></details></div>
+<div class="panel"><h2>Active Sessions</h2>{% for item in detail.sessions %}<div class="session-row"><span>Store {{ item.store_id }} &middot; last used {{ item.last_used_at }} <strong>{{ 'Active' if item.is_active else 'Ended' }}</strong></span>{% if item.is_active %}<form method="post" action="/dashboard/system/users/{{ user_id }}/sessions/{{ item.session_reference }}/terminate?csrf_token={{ csrf_token }}"><button type="submit">Terminate</button></form>{% endif %}</div>{% else %}<p class="empty-state">No sessions recorded.</p>{% endfor %}{% if session.user_id == user_id %}<form method="post" action="/dashboard/system/sessions/terminate-others?csrf_token={{ csrf_token }}"><button type="submit">Terminate all except current</button></form>{% endif %}</div></section>{% endif %}
+{% endif %}
+
+{% endblock %}

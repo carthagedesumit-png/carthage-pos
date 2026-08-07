@@ -1,0 +1,217 @@
+# Carthage Business Operating System Architecture
+
+## Overview
+
+Carthage Business Operating System (CBOS) is a layered Python application
+backed by SQLite. The POS remains the core operating module. Terminal,
+dashboard, and API adapters call service functions; services enforce
+authorization and business rules; database modules own connections, schema
+migration, and transaction boundaries. Reporting and document generation are
+read-oriented consumers of persisted business records.
+
+Dependencies flow inward:
+
+1. `app/ui` adapts user interaction to service calls.
+2. `app/api` adapts HTTP requests to the same service contracts.
+3. Domain services in `app/sales`, `app/inventory`, `app/procurement`, and
+   `app/stores` coordinate business operations.
+4. Shared policy and infrastructure live in `app/core` and `app/database`.
+5. `app/reports` and `app/documents` query completed records without owning
+   sales, procurement, or inventory mutations.
+
+## Module Responsibilities
+
+- `auth.py`: authentication, session revalidation, roles, and store access.
+- `app/core/config.py`: validated immutable process configuration.
+- `app/core/exceptions.py`: stable application exception taxonomy.
+- `app/core/validation.py`: reusable input normalization and validation.
+- `app/core/logging_utils.py`: namespaced structured operational events.
+- `app/api`: bearer authentication, request schemas, routers, pagination, and
+  HTTP exception translation; it owns no business rules.
+- `app/hardware`: peripheral contracts, adapters, composition, authorization,
+  fallback behavior, and non-sensitive hardware auditing.
+- `app/database/db_manager.py`: connection creation and idempotent migrations.
+- `app/database/transactions.py`: explicit atomic write transactions.
+- `app/inventory`: catalog, branch inventory, and stock movement audit records.
+- `app/sales`: totals, payment, sale, return, and stock coordination.
+- `app/procurement`: suppliers, purchase orders, receipts, and costing.
+- `app/stores`: stores, user assignment, and inter-store transfers.
+- `app/customers`: customer profiles, groups, loyalty, wallet, and credit ledgers.
+- `app/reports`: refund-aware analytics and inventory valuation.
+- `app/documents`: side-effect-free business document assembly and rendering.
+- `app/dashboard`: browser management workspaces, dashboard-specific read
+  models, BI widgets, and lightweight JSON endpoints. Dashboard routes delegate
+  sales, inventory, customer, wallet, loyalty, credit, barcode, reporting, and
+  document behavior to service helpers and domain modules. Procurement dashboard
+  reads stay separate from supplier, purchase order, receipt, inventory costing,
+  and receiving mutations owned by `app/procurement`. Reports dashboard helpers
+  wrap `app/reports/reporting_service` where possible and add schema-safe
+  dashboard aggregation only for browser composition and placeholder export
+  foundations. Administration dashboard helpers provide read-only, masked
+  composition over auth, licensing, backup, deployment, hardware, and
+  configuration services while full browser auth enforcement is pending.
+- `app/barcodes`: normalized identifiers, label rendering/printing, scanner
+  lookup, and barcode operational reports.
+- `app/backup`: SQLite snapshots, manifests, verification, atomic restore,
+  retention, scheduling policy, and portable data transfer.
+- `app/deployment`: setup validation, configuration generation, installation
+  lifecycle, deployment health, Windows integration metadata, and update staging.
+- `app/licensing`: RSA signature verification, privacy-preserving machine
+  fingerprints, offline activation, trial/grace lifecycle, edition policy, and
+  centrally enforced feature/resource limits. Issuer private keys never enter
+  runtime application modules or production packages.
+
+## Release Candidate Hardening
+
+The Release Candidate Preparation V1 phase avoids new business modules and
+focuses on beta deployment quality:
+
+- Dashboard HTML rendering uses modern Starlette/FastAPI template response
+  calling conventions through a shared dashboard render helper.
+- Browser dashboard failures are translated into sanitized, friendly HTML
+  responses while API routes preserve the JSON error contract.
+- Dashboard navigation, product naming, loading states, empty states, and
+  Administration labels are kept consistent across workspaces.
+- Read-model helpers favor focused aggregate queries and schema-safe fallbacks
+  over duplicated dashboard queries.
+- Logs record stable event names, method, path, status, duration, and exception
+  type without exposing secrets or local configuration values.
+
+## RC Build And Runtime Packaging
+
+The v1.0 RC build keeps release metadata centralized in `app/core/version.py`.
+Build scripts read that source to generate PyInstaller Windows metadata, pass
+the version into Inno Setup, write release manifests, and validate checksums.
+Installer templates deliberately avoid hard-coded RC versions.
+
+Packaged resource lookup is centralized in `app/core/runtime_paths.py`.
+Dashboard templates and static assets resolve through that helper so source
+runs and PyInstaller bundle runs use the same dashboard router and app factory
+without scattering direct `_MEIPASS` checks across routes.
+
+## Production Operations Foundation
+
+Version 1.0 production readiness keeps the architecture layered:
+
+- `app/api/security_middleware.py` owns HTTP security headers, request IDs,
+  cookie hardening, optional dashboard CSRF checks, and failed-login rate
+  limiting.
+- `app/core/health_service.py` owns liveness/readiness composition for database
+  connectivity, schema compatibility, configuration diagnostics, and deployment
+  status.
+- `app/core/configuration_validation.py` owns startup path validation and
+  writable-directory diagnostics. Strict fail-fast validation is enabled for
+  production with `POS_STRICT_STARTUP_VALIDATION=true`.
+- `app/api/session_service.py` owns absolute and idle API session expiry.
+- `app/backup` remains the single owner of manual backups, restore validation,
+  integrity verification, timestamped artifacts, and retention.
+
+Routes continue to adapt HTTP to services only; production controls are shared
+middleware or service helpers.
+
+## Release Governance
+
+Release governance keeps ownership aligned with existing subsystems:
+
+- `app/core/version.py` is the single source for application, API, installer,
+  migration, and database schema versions.
+- `app/deployment/release_manifest.py` creates machine-readable release
+  manifests for deployment verification and future update checks.
+- `app/deployment/upgrade_rehearsal.py` rehearses migrations against copied
+  databases and proves failed upgrades leave source data unchanged.
+- `app/deployment/release_checklist.py` validates auditable release checklist
+  status without replacing human sign-off.
+- `app/licensing/providers.py` defines a replaceable technical license status
+  provider interface while the existing offline licensing subsystem remains the
+  owner of signed license validation.
+
+## Service Interactions
+
+Every public write service follows the same sequence:
+
+1. Revalidate the caller session and store scope.
+2. Normalize and validate input before mutation where possible.
+3. Open one `transaction()` for the complete business operation.
+4. Write the primary record, dependent records, inventory balances, and audit
+   rows using the same connection.
+5. Commit once, then emit a sanitized structured log event.
+6. Return the established dictionary-based service contract.
+
+Exceptions raised inside a transaction trigger rollback and propagate. Domain
+validation exceptions inherit from `ValueError`, preserving legacy callers,
+while also inheriting from `ApplicationError` for newer integrations.
+
+Customer monetary and points balances are never edited directly. Loyalty,
+wallet, and credit state is derived from immutable signed ledger entries. Sales,
+returns, tender allocations, customer ledger entries, stock changes, and their
+audit records share one transaction so a failure cannot leave partial state.
+`sale_payments` is the authoritative tender breakdown; the sale header retains
+compatibility totals and a unique optional source-cart link. Card and transfer
+references are operational evidence only and never imply external verification.
+Refunds retain method, operator, store, optional original-payment link, and an
+optional unique request key without rewriting the original tender. Cash sessions
+derive expected cash from opening balance, movements, cash collections, and the
+proportional cash share of refunds.
+
+## Migration Strategy
+
+Schema changes are idempotent functions in `app/database/db_manager.py` and run
+through `initialize_database()`. A migration must preserve historical records,
+use additive changes where possible, backfill deterministic values, and be
+covered by a legacy-schema test. Never perform schema migration from a domain
+service.
+
+`app.database.db_manager.authoritative_migrations()` is the sole ordered schema
+registry. Its order is dependency order: identity, stores/sessions, operational
+tables, inventory/procurement, sales/payments/refunds, finance, pilot data, and
+analytics/compatibility. Startup begins one `BEGIN IMMEDIATE` transaction, rejects
+a `PRAGMA user_version` newer than this source, applies every additive/idempotent
+migration, and advances `user_version` only after the registry succeeds. SQL
+scripts are split with `sqlite3.complete_statement()`; `executescript()` is not
+permitted because it can disrupt the surrounding transaction. A failed migration
+therefore rolls back its schema, seeds, indexes, and version marker together.
+Barcode migrations add `product_identifiers`, `barcode_audit`,
+`label_print_jobs`, and `label_print_items`, plus additive `unit` and
+`promotion_price` product fields. Existing barcodes are safely backfilled.
+Backup compatibility uses SQLite `PRAGMA user_version`; backup artifacts and
+sidecar metadata remain outside the transactional business database.
+Installer lifecycle operations use staging databases and SQLite snapshots.
+PyInstaller packages the Python entry points; Inno Setup owns Windows shortcuts,
+Programs and Features registration, file deployment, and executable uninstall.
+Licensing is code-only and stores signed activation documents outside SQLite, so
+it introduces no database migration. Runtime license replacement uses atomic file
+operations and archives the previous signed document.
+
+## Configuration
+
+Read settings through `get_config()` rather than accessing environment variables
+inside domain services. Configuration is immutable and cached. Tests or process
+bootstrap code that changes environment values must call `reset_config_cache()`.
+Defaults preserve prior behavior when no variables are configured.
+Source/development runs leave license enforcement disabled for backward
+compatibility. Installer-generated configuration enables it, starts a
+Professional-feature evaluation, and falls back to Community after expiration.
+
+Loyalty policy uses `POS_LOYALTY_POINTS_PER_CURRENCY`,
+`POS_LOYALTY_MINIMUM_PURCHASE`, `POS_LOYALTY_REDEMPTION_RATIO`, and
+`POS_LOYALTY_EXPIRATION_DAYS`. Customer codes use `POS_CUSTOMER_PREFIX`.
+
+## Logging
+
+Use a logger from `get_logger()` and emit stable event names with `log_event()`.
+Do not log passwords, hashes, tokens, payment credentials, or full generated
+documents. Applications configure handlers and serialization at their entry
+point; library modules never call `basicConfig()`.
+
+## Coding Conventions
+
+- Keep SQL parameterized; interpolate only locally controlled column names.
+- Use one transaction per multi-step write operation.
+- Keep authorization at every public mutation boundary.
+- Raise the narrowest application exception that describes the domain failure.
+- Preserve public function inputs and dictionary return shapes unless a versioned
+  API explicitly replaces them.
+- Put reusable validation in `app/core/validation.py` and retain domain-specific
+  state checks in their owning service.
+- Add migrations only for persisted schema changes, never for code-only refactors.
+- Add focused tests for success, validation, authorization, and rollback paths.

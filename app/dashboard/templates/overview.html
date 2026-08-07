@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="hero">
+    <div>
+        <h1>Good Morning, {{ header.user }}</h1>
+        <p>{{ header.store }} · Executive Business Command Center</p>
+        <small>Last updated: {{ metrics.generated_at }}</small>
+        <br>
+        <span class="clock-pill" id="dashboardClock">--:--:--</span>
+    </div>
+
+    <div class="hero-status">
+        <span class="status success">API {{ metrics.api_status }}</span>
+        <span class="status success">License {{ metrics.license_status }}</span>
+        <span class="status success">Backup {{ metrics.backup_status }}</span>
+        <span class="status warning">Hardware {{ metrics.hardware_status }}</span>
+    </div>
+</section>
+
+<section class="cards">
+    <div class="card"><span>Today's Sales</span><strong>{{ metrics.today_sales }}</strong></div>
+    <div class="card"><span>Today's Profit</span><strong>{{ metrics.today_profit }}</strong></div>
+    <div class="card"><span>Transactions</span><strong>{{ metrics.transactions }}</strong></div>
+    <div class="card"><span>Low Stock</span><strong>{{ metrics.low_stock }}</strong></div>
+    <div class="card"><span>Outstanding Credit</span><strong>{{ metrics.outstanding_credit }}</strong></div>
+    <div class="card"><span>Inventory Value</span><strong>{{ metrics.inventory_value }}</strong></div>
+    <div class="card"><span>Customers</span><strong>{{ metrics.customers }}</strong></div>
+    <div class="card"><span>Stores</span><strong>{{ metrics.stores }}</strong></div>
+    <div class="card"><span>Users</span><strong>{{ metrics.users }}</strong></div>
+</section>
+
+<section class="dashboard-grid">
+
+    <div class="panel">
+        <h2>Sales Trend</h2>
+        <div class="dynamic-chart" id="salesTrendChart">
+            <p class="empty-state">Loading sales trend...</p>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>System Health</h2>
+
+        <div class="health-list">
+            <div class="health-item"><span class="health-label"><span class="dot green"></span> API</span><strong>{{ metrics.api_status }}</strong></div>
+            <div class="health-item"><span class="health-label"><span class="dot green"></span> License</span><strong>{{ metrics.license_status }}</strong></div>
+            <div class="health-item"><span class="health-label"><span class="dot green"></span> Backup</span><strong>{{ metrics.backup_status }}</strong></div>
+            <div class="health-item"><span class="health-label"><span class="dot amber"></span> Hardware</span><strong>{{ metrics.hardware_status }}</strong></div>
+        </div>
+    </div>
+
+</section>
+
+<section class="dashboard-grid">
+
+    <div class="panel">
+        <h2>Recent Sales</h2>
+
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Receipt</th>
+                    <th>Customer</th>
+                    <th>Amount</th>
+                    <th>Store</th>
+                    <th>Time</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sale in metrics.recent_sales %}
+                <tr>
+                    <td>{{ sale.receipt }}</td>
+                    <td>{{ sale.customer }}</td>
+                    <td>{{ sale.amount }}</td>
+                    <td>{{ sale.store }}</td>
+                    <td>{{ sale.time }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5">No recent sales yet.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="panel">
+        <h2>Top Products</h2>
+        <div class="ranking-list" id="topProductsList">
+            <p class="empty-state">Loading top products...</p>
+        </div>
+    </div>
+
+</section>
+
+<section class="dashboard-grid">
+
+    <div class="panel">
+        <h2>Low Stock Alerts</h2>
+
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Qty</th>
+                    <th>Reorder</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in metrics.low_stock_items %}
+                <tr>
+                    <td>{{ item.name }}</td>
+                    <td>{{ item.quantity }}</td>
+                    <td>{{ item.reorder_level }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="3">No low stock alerts.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="panel">
+        <h2>Business Insights</h2>
+        <div class="notification-list" id="businessInsights">
+            <div class="notification-item">
+                <strong>Loading insights...</strong>
+                <span>Please wait.</span>
+            </div>
+        </div>
+    </div>
+
+</section>
+
+<section class="dashboard-grid">
+
+    <div class="panel">
+        <h2>Quick Actions</h2>
+
+        <div class="quick-actions">
+            <a class="quick-action" href="#"><span>🛒</span>New Sale</a>
+            <a class="quick-action" href="#"><span>📦</span>Receive Stock</a>
+            <a class="quick-action" href="#"><span>👤</span>New Customer</a>
+            <a class="quick-action" href="#"><span>💾</span>Backup</a>
+            <a class="quick-action" href="#"><span>📊</span>Reports</a>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Notifications</h2>
+
+        <div class="notification-list">
+            {% for note in metrics.notifications %}
+            <div class="notification-item">
+                <strong>{{ note.message }}</strong>
+                <span>{{ note.time }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+</section>
+
+{% endblock %}

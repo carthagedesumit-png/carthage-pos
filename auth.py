@@ -2,25 +2,33 @@ import getpass
 import os
 from dataclasses import dataclass
 from sqlite3 import IntegrityError
+from typing import Optional
 
 import bcrypt
 
+from app.core.exceptions import AuthenticationError, AuthorizationError, ValidationError
+from app.core.logging_utils import get_logger, log_event
+from app.core.validation import required_text
 from app.database.db_manager import get_connection
+from app.database.transactions import transaction
 
 ROLE_ADMIN = "admin"
 ROLE_MANAGER = "manager"
 ROLE_CASHIER = "cashier"
-VALID_ROLES = {ROLE_ADMIN, ROLE_MANAGER, ROLE_CASHIER}
-INVENTORY_ROLES = {ROLE_ADMIN, ROLE_MANAGER}
+ROLE_AUDITOR = "auditor"
+ROLE_INVENTORY_OFFICER = "inventory_officer"
+VALID_ROLES = {ROLE_ADMIN, ROLE_MANAGER, ROLE_CASHIER, ROLE_AUDITOR, ROLE_INVENTORY_OFFICER}
+INVENTORY_ROLES = {ROLE_ADMIN, ROLE_MANAGER, ROLE_INVENTORY_OFFICER}
 USER_MANAGEMENT_ROLES = {ROLE_ADMIN}
 
 
-class AuthenticationError(Exception):
-    pass
+logger = get_logger("authentication")
 
-
-class AuthorizationError(Exception):
-    pass
+CREDENTIAL_OK = "ok"
+CREDENTIAL_USER_NOT_FOUND = "user_not_found"
+CREDENTIAL_PASSWORD_MISMATCH = "bcrypt_mismatch"
+CREDENTIAL_INACTIVE = "inactive"
+CREDENTIAL_LOCKED = "locked"
 
 
 @dataclass(frozen=True)
@@ -29,6 +37,7 @@ class UserSession:
     username: str
     full_name: str
     role: str
+    store_id: Optional[int] = None
 
     def can_manage_users(self):
         return self.role in USER_MANAGEMENT_ROLES
@@ -63,8 +72,8 @@ class AuthenticationSystem:
 
     def ensure_default_users(self):
         """Creates first-run users only from environment-provided passwords."""
-        configured_users = [
-            ("admin", os.environ.get("CARTHAGE_POS_ADMIN_PASSWORD"), "System Administrator", ROLE_ADMIN),
+        admin_password = os.environ.get("CARTHAGE_POS_ADMIN_PASSWORD")
+        configured_staff = [
             ("manager1", os.environ.get("CARTHAGE_POS_MANAGER_PASSWORD"), "Store Manager", ROLE_MANAGER),
             ("cashier1", os.environ.get("CARTHAGE_POS_CASHIER_PASSWORD"), "Cashier One", ROLE_CASHIER),
         ]
@@ -74,16 +83,17 @@ class AuthenticationSystem:
             if user_count > 0:
                 return
 
-        created = 0
-        for username, password, full_name, role in configured_users:
+        if not admin_password:
+            print("No POS users are configured yet.")
+            print("Set CARTHAGE_POS_ADMIN_PASSWORD before first login.")
+            return
+
+        bootstrap_admin("admin", admin_password, "System Administrator")
+        admin_session = authenticate_user("admin", admin_password)
+        for username, password, full_name, role in configured_staff:
             if not password:
                 continue
-            create_user(username, password, full_name, role)
-            created += 1
-
-        if created == 0:
-            print("No POS users are configured yet.")
-            print("Set CARTHAGE_POS_ADMIN_PASSWORD, CARTHAGE_POS_MANAGER_PASSWORD, or CARTHAGE_POS_CASHIER_PASSWORD before first login.")
+            create_user(username, password, full_name, role, acting_session=admin_session)
 
     def login(self):
         """Handles the cashier login loop and stores a user session."""
@@ -116,7 +126,7 @@ class AuthenticationSystem:
 
 def hash_password(password):
     if not password:
-        raise ValueError("Password cannot be empty.")
+        raise ValidationError("Password cannot be empty.")
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
@@ -126,111 +136,362 @@ def verify_password(password, password_hash):
     return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
 
 
-def row_to_session(row):
+def row_to_session(row, store_id=None):
+    active_store_id = store_id if store_id is not None else row["home_store_id"]
     return UserSession(
         user_id=row["id"],
         username=row["username"],
         full_name=row["full_name"],
-        role=row["role"]
+        role=row["role"],
+        store_id=active_store_id,
     )
 
 
-def create_user(username, password, full_name, role=ROLE_CASHIER, acting_session=None):
-    if acting_session:
-        require_user_management(acting_session)
+def bootstrap_admin(username, password, full_name):
+    """Creates the first administrator and is permanently disabled afterward."""
     username = normalize_username(username)
-    validate_role(role)
-    if not full_name or not full_name.strip():
-        raise ValueError("Full name is required.")
+    full_name = required_text(full_name, "Full name")
+    password_hash = hash_password(password)
 
     try:
-        with get_connection() as conn:
+        with transaction() as conn:
+            user_count = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE username != 'system'"
+            ).fetchone()[0]
+            if user_count:
+                raise AuthorizationError(
+                    "Administrator bootstrap is only available before the first user is created."
+                )
             cursor = conn.execute(
-                """INSERT INTO users (username, password_hash, full_name, role, is_active)
-                   VALUES (?, ?, ?, ?, 1)""",
-                (username, hash_password(password), full_name.strip(), role)
+                """INSERT INTO users (
+                       username, password_hash, full_name, role, is_active, home_store_id
+                   ) VALUES (?, ?, ?, ?, 1, ?)""",
+                (
+                    username,
+                    password_hash,
+                    full_name,
+                    ROLE_ADMIN,
+                    _default_store_id(conn),
+                ),
             )
             user_id = cursor.lastrowid
     except IntegrityError as exc:
-        raise ValueError(f"Username already exists: {username}") from exc
+        raise ValidationError(f"Username already exists: {username}") from exc
 
+    log_event(logger, "admin_bootstrapped", user_id=user_id, username=username)
     return get_user_by_id(user_id)
 
 
-def authenticate_user(username, password):
+def create_user(
+    username,
+    password,
+    full_name,
+    role=ROLE_CASHIER,
+    acting_session=None,
+    home_store_id=None,
+):
+    acting_session = require_user_management(acting_session)
+    user = _insert_user(
+        username,
+        password,
+        full_name,
+        role,
+        home_store_id=home_store_id or acting_session.store_id,
+    )
+    _record_user_audit(user["id"], acting_session.user_id, "USER_CREATED", {"role": role})
+    return user
+
+
+def _insert_user(username, password, full_name, role, home_store_id=None):
+    username = normalize_username(username)
+    validate_role(role)
+    full_name = required_text(full_name, "Full name")
+
+    try:
+        with transaction() as conn:
+            home_store_id = home_store_id or _default_store_id(conn)
+            _require_active_store(conn, home_store_id)
+            from app.licensing.feature_service import enforce_resource_limit, require_write_access
+            require_write_access()
+            user_count = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE username != 'system' AND is_active = 1"
+            ).fetchone()[0]
+            enforce_resource_limit("users", user_count)
+            cursor = conn.execute(
+                """INSERT INTO users (
+                       username, password_hash, full_name, role, is_active, home_store_id
+                   ) VALUES (?, ?, ?, ?, 1, ?)""",
+                (username, hash_password(password), full_name, role, home_store_id)
+            )
+            user_id = cursor.lastrowid
+            conn.execute(
+                "INSERT OR IGNORE INTO user_store_access (user_id, store_id) VALUES (?, ?)",
+                (user_id, home_store_id),
+            )
+    except IntegrityError as exc:
+        raise ValidationError(f"Username already exists: {username}") from exc
+
+    log_event(logger, "user_created", user_id=user_id, username=username, role=role)
+    return get_user_by_id(user_id)
+
+
+def authenticate_user(username, password, store_id=None, *, report_account_state=False):
     username = normalize_username(username)
     with get_connection() as conn:
-        row = conn.execute(
-            """SELECT id, username, password_hash, full_name, role, is_active
-               FROM users WHERE username = ?""",
-            (username,)
-        ).fetchone()
-        if not row or not row["is_active"] or not verify_password(password, row["password_hash"]):
+        status, row = _verify_credentials_in_connection(conn, username, password)
+        if status == CREDENTIAL_USER_NOT_FOUND:
+            log_event(logger, "authentication_failed", username=username)
             return None
-        conn.execute("UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
-        return row_to_session(row)
+        if status == CREDENTIAL_PASSWORD_MISMATCH:
+            conn.execute(
+                "UPDATE users SET failed_login_count = failed_login_count + 1 WHERE id = ?",
+                (row["id"],),
+            )
+            log_event(logger, "authentication_failed", username=username)
+            return None
+        if status == CREDENTIAL_INACTIVE:
+            log_event(logger, "authentication_failed", username=username, account_state="inactive")
+            if report_account_state:
+                raise AuthenticationError("This account is inactive. Contact an administrator.")
+            return None
+        if status == CREDENTIAL_LOCKED:
+            log_event(logger, "authentication_failed", username=username, account_state="locked")
+            if report_account_state:
+                raise AuthenticationError("This account is locked. Contact an administrator.")
+            return None
+        conn.execute(
+            "UPDATE users SET last_login = CURRENT_TIMESTAMP, failed_login_count = 0 WHERE id = ?",
+            (row["id"],),
+        )
+        session = row_to_session(row, store_id=store_id)
+        session = validate_session(session)
+        log_event(logger, "authentication_succeeded", user_id=session.user_id, username=username)
+        return session
+
+
+def _verify_credentials_in_connection(conn, username, password):
+    """Shared account-state and bcrypt decision used by login and upgrade preflight."""
+    row = conn.execute(
+        """SELECT id, username, password_hash, full_name, role, is_active, home_store_id,
+                  COALESCE(is_locked, 0) AS is_locked
+             FROM users WHERE username = ?""",
+        (normalize_username(username),),
+    ).fetchone()
+    if not row:
+        return CREDENTIAL_USER_NOT_FOUND, None
+    if not verify_password(password, row["password_hash"]):
+        return CREDENTIAL_PASSWORD_MISMATCH, row
+    if not row["is_active"]:
+        return CREDENTIAL_INACTIVE, row
+    if row["is_locked"]:
+        return CREDENTIAL_LOCKED, row
+    return CREDENTIAL_OK, row
 
 
 def change_password(user_id, new_password, acting_session=None):
-    if acting_session and acting_session.user_id != user_id:
+    acting_session = validate_session(acting_session)
+    if acting_session.user_id != user_id:
         require_user_management(acting_session)
     if not get_user_by_id(user_id):
-        raise ValueError("User does not exist.")
-    with get_connection() as conn:
+        raise ValidationError("User does not exist.")
+    with transaction() as conn:
+        current = conn.execute("SELECT password_hash FROM users WHERE id = ?", (user_id,)).fetchone()
+        if current and _table_available(conn, "user_password_history"):
+            recent = conn.execute(
+                "SELECT password_hash FROM user_password_history WHERE user_id = ? ORDER BY id DESC LIMIT 5",
+                (user_id,),
+            ).fetchall()
+            if verify_password(new_password, current["password_hash"]) or any(
+                verify_password(new_password, item["password_hash"]) for item in recent
+            ):
+                raise ValidationError("The new password must not reuse a recent password.")
+            conn.execute(
+                "INSERT INTO user_password_history (user_id, password_hash, changed_by) VALUES (?, ?, ?)",
+                (user_id, current["password_hash"], acting_session.user_id),
+            )
         conn.execute(
-            "UPDATE users SET password_hash = ? WHERE id = ?",
+            "UPDATE users SET password_hash = ?, force_password_change = 0 WHERE id = ?",
             (hash_password(new_password), user_id)
         )
+        _record_user_audit_in_connection(conn, user_id, acting_session.user_id, "PASSWORD_CHANGED")
+    log_event(logger, "password_changed", user_id=user_id, acting_user_id=acting_session.user_id)
 
 
 def deactivate_user(user_id, acting_session=None):
-    if acting_session:
-        require_user_management(acting_session)
-    with get_connection() as conn:
+    acting_session = require_user_management(acting_session)
+    if acting_session.user_id == user_id:
+        raise AuthorizationError("Administrators cannot deactivate their own active session.")
+    with transaction() as conn:
         cursor = conn.execute("UPDATE users SET is_active = 0 WHERE id = ?", (user_id,))
         if cursor.rowcount == 0:
-            raise ValueError("User does not exist.")
+            raise ValidationError("User does not exist.")
+        _record_user_audit_in_connection(conn, user_id, acting_session.user_id, "USER_DEACTIVATED")
+    log_event(logger, "user_deactivated", user_id=user_id, acting_user_id=acting_session.user_id)
 
 
 def reactivate_user(user_id, acting_session=None):
-    if acting_session:
-        require_user_management(acting_session)
-    with get_connection() as conn:
+    acting_session = require_user_management(acting_session)
+    with transaction() as conn:
         cursor = conn.execute("UPDATE users SET is_active = 1 WHERE id = ?", (user_id,))
         if cursor.rowcount == 0:
-            raise ValueError("User does not exist.")
+            raise ValidationError("User does not exist.")
+        _record_user_audit_in_connection(conn, user_id, acting_session.user_id, "USER_ACTIVATED")
+    log_event(logger, "user_reactivated", user_id=user_id, acting_user_id=acting_session.user_id)
 
 
 def get_user_by_id(user_id):
     with get_connection() as conn:
         row = conn.execute(
-            """SELECT id, username, full_name, role, is_active, created_at, last_login
+            """SELECT id, username, full_name, role, is_active, created_at, last_login,
+                      home_store_id, email, failed_login_count, is_locked, force_password_change,
+                      updated_at
                FROM users WHERE id = ?""",
             (user_id,)
         ).fetchone()
         return dict(row) if row else None
 
 
+def search_users(acting_session, term=None, include_inactive=False):
+    """Return non-sensitive user records for administrator tooling."""
+    require_user_management(acting_session)
+    filters = ["username != 'system'"]
+    params = []
+    if not include_inactive:
+        filters.append("is_active = 1")
+    if term and str(term).strip():
+        pattern = f"%{str(term).strip()}%"
+        filters.append("(username LIKE ? OR full_name LIKE ? OR role LIKE ?)")
+        params.extend([pattern, pattern, pattern])
+    with get_connection() as conn:
+        return [
+            dict(row)
+            for row in conn.execute(
+                f"""SELECT id, username, full_name, role, is_active, created_at,
+                           last_login, home_store_id
+                    FROM users WHERE {' AND '.join(filters)}
+                    ORDER BY username COLLATE NOCASE""",
+                params,
+            ).fetchall()
+        ]
+
+
 def require_user_management(session):
-    if not session or not session.can_manage_users():
+    session = validate_session(session)
+    if not session.can_manage_users():
         raise AuthorizationError("Only admin users can manage POS users.")
+    return session
 
 
-def require_inventory_management(session):
-    if not session or not session.can_manage_inventory():
+def require_inventory_management(session, store_id=None):
+    session = validate_session(session)
+    if not session.can_manage_inventory():
         raise AuthorizationError("Only admin and manager users can manage inventory.")
+    if store_id is not None:
+        require_store_access(session, store_id, manage=True)
+    return session
+
+
+def validate_session(session):
+    """Revalidates identity, role, and active status against the current database."""
+    if not isinstance(session, UserSession):
+        raise AuthorizationError("A valid authenticated user session is required.")
+    with get_connection() as conn:
+        row = conn.execute(
+            """SELECT id, username, full_name, role, is_active, home_store_id
+               FROM users WHERE id = ?""",
+            (session.user_id,),
+        ).fetchone()
+        if row:
+            active_store_id = session.store_id or row["home_store_id"]
+            store = conn.execute(
+                "SELECT id, is_active FROM stores WHERE id = ?", (active_store_id,)
+            ).fetchone()
+            has_assignment = conn.execute(
+                "SELECT 1 FROM user_store_access WHERE user_id = ? AND store_id = ?",
+                (row["id"], active_store_id),
+            ).fetchone()
+        else:
+            active_store_id = None
+            store = None
+            has_assignment = None
+    if (
+        not row
+        or not row["is_active"]
+        or row["username"] != session.username
+        or row["role"] != session.role
+    ):
+        raise AuthorizationError("This user session is no longer valid.")
+    if not store or not store["is_active"]:
+        raise AuthorizationError("The selected store is inactive or unavailable.")
+    if row["role"] == ROLE_CASHIER and active_store_id != row["home_store_id"]:
+        raise AuthorizationError("Cashiers may only operate in their assigned home store.")
+    if row["role"] in {ROLE_MANAGER, ROLE_AUDITOR, ROLE_INVENTORY_OFFICER} and not has_assignment:
+        raise AuthorizationError("User is not assigned to the selected store.")
+    return row_to_session(row, store_id=active_store_id)
+
+
+def switch_store(session, store_id):
+    """Return a revalidated session scoped to an authorized active store."""
+    session = validate_session(session)
+    candidate = UserSession(
+        user_id=session.user_id,
+        username=session.username,
+        full_name=session.full_name,
+        role=session.role,
+        store_id=int(store_id),
+    )
+    return validate_session(candidate)
+
+
+def require_store_access(session, store_id, manage=False):
+    """Require access to one store, with manager/admin rights when requested."""
+    scoped = switch_store(session, store_id)
+    if manage and scoped.role not in INVENTORY_ROLES:
+        raise AuthorizationError("Only admin and manager users can manage stores.")
+    return scoped
+
+
+def _default_store_id(conn):
+    row = conn.execute("SELECT id FROM stores WHERE code = 'MAIN' COLLATE NOCASE").fetchone()
+    if not row:
+        raise ValueError("Default store is not configured.")
+    return row["id"]
+
+
+def _require_active_store(conn, store_id):
+    row = conn.execute(
+        "SELECT id FROM stores WHERE id = ? AND is_active = 1", (store_id,)
+    ).fetchone()
+    if not row:
+        raise ValueError("Store not found or inactive.")
 
 
 def normalize_username(username):
     username = (username or "").strip().lower()
     if not username:
-        raise ValueError("Username is required.")
+        raise ValidationError("Username is required.")
     return username
 
 
 def validate_role(role):
     if role not in VALID_ROLES:
-        raise ValueError(f"Role must be one of: {', '.join(sorted(VALID_ROLES))}.")
+        raise ValidationError(f"Role must be one of: {', '.join(sorted(VALID_ROLES))}.")
+
+def _table_available(conn, name):
+    return bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone())
+
+def _record_user_audit(user_id, acting_user_id, event_type, details=None):
+    import json
+    with transaction() as conn:
+        _record_user_audit_in_connection(conn, user_id, acting_user_id, event_type, details)
+
+def _record_user_audit_in_connection(conn, user_id, acting_user_id, event_type, details=None):
+    import json
+    if _table_available(conn, "user_audit_events"):
+        conn.execute(
+            "INSERT INTO user_audit_events (user_id, acting_user_id, event_type, details) VALUES (?, ?, ?, ?)",
+            (user_id, acting_user_id, event_type, json.dumps(details or {}, sort_keys=True)),
+        )
 
 
 if __name__ == "__main__":

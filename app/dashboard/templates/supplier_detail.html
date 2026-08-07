@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{% if not detail %}
+<section class="hero">
+    <div>
+        <h1>Supplier Not Found</h1>
+        <p>No supplier record is available for ID {{ supplier_id }}.</p>
+        <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <a class="hero-link" href="/dashboard/procurement">Back to Procurement</a>
+    </div>
+</section>
+{% else %}
+<section class="hero">
+    <div>
+        <h1>{{ detail.supplier.name }}</h1>
+        <p>{{ detail.supplier.active_status.title() }} supplier &middot; {{ detail.supplier.purchase_order_count }} purchase orders</p>
+        <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <span class="status success">{{ detail.supplier.purchase_value_display }} purchased</span>
+        <span class="status warning">{{ detail.supplier.outstanding_orders }} outstanding</span>
+        <a class="hero-link" href="/dashboard/procurement">Back to Procurement</a>
+    </div>
+</section>
+
+<section class="cards">
+    <div class="card accent-blue">
+        <span>Purchase Orders</span>
+        <strong>{{ detail.performance.purchase_order_count }}</strong>
+    </div>
+    <div class="card accent-green">
+        <span>Total Purchase Value</span>
+        <strong>{{ detail.performance.purchase_value_display }}</strong>
+    </div>
+    <div class="card accent-amber">
+        <span>Outstanding POs</span>
+        <strong>{{ detail.performance.outstanding_orders }}</strong>
+    </div>
+    <div class="card accent-red">
+        <span>Last Purchase</span>
+        <strong>{{ detail.performance.last_purchase_date or "None" }}</strong>
+    </div>
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>Supplier Profile</h2>
+        <div class="detail-list">
+            <span>Name <strong>{{ detail.supplier.name }}</strong></span>
+            <span>Status <strong>{{ detail.supplier.active_status.title() }}</strong></span>
+            <span>Phone <strong>{{ detail.supplier.phone or "No phone" }}</strong></span>
+            <span>Email <strong>{{ detail.supplier.email or "No email" }}</strong></span>
+            <span>Address <strong>{{ detail.supplier.address or "No address" }}</strong></span>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Performance Summary</h2>
+        <div class="detail-list">
+            <span>Total POs <strong>{{ detail.performance.purchase_order_count }}</strong></span>
+            <span>Outstanding POs <strong>{{ detail.performance.outstanding_orders }}</strong></span>
+            <span>Total Value <strong>{{ detail.performance.purchase_value_display }}</strong></span>
+            <span>Last Purchase <strong>{{ detail.performance.last_purchase_date or "No purchases" }}</strong></span>
+        </div>
+    </div>
+</section>
+
+<section class="dashboard-grid detail-grid">
+    <div class="panel">
+        <h2>Recent Purchase Orders</h2>
+        {% if detail.recent_purchase_orders %}
+        <div class="table-scroll">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Reference</th>
+                        <th>Status</th>
+                        <th>Ordered</th>
+                        <th>Received</th>
+                        <th>Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for purchase_order in detail.recent_purchase_orders %}
+                    <tr>
+                        <td><a class="table-link" href="/dashboard/procurement/purchase-orders/{{ purchase_order.id }}">{{ purchase_order.reference_number }}</a></td>
+                        <td><span class="badge badge-{{ purchase_order.badge }}">{{ purchase_order.status_label }}</span></td>
+                        <td>{{ purchase_order.ordered_quantity }}</td>
+                        <td>{{ purchase_order.received_quantity }}</td>
+                        <td>{{ purchase_order.estimated_value_display }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="empty-state">No purchase orders are recorded for this supplier.</p>
+        {% endif %}
+    </div>
+
+    <div class="panel">
+        <h2>Supplier Actions</h2>
+        <div class="quick-actions label-actions">
+            {% for action in detail.actions %}
+            <a class="disabled-action" href="#">{{ action.label }}</a>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+{% endif %}
+
+{% endblock %}

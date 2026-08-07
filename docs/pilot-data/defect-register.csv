@@ -1,0 +1,2 @@
+defect_reference,severity,reported_at_utc,operator_role,store_code,summary,reproduction_steps,expected,actual,workaround,status,owner
+DEFECT-EXAMPLE-001,low,2099-01-01T00:00:00Z,cashier,MAIN,Fictional example,Example steps,Example expected,Example actual,None,open,Unassigned

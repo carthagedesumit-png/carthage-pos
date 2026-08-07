@@ -10,15 +10,13 @@ class InventoryServiceTestCase(unittest.TestCase):
         os.environ["CARTHAGE_POS_DB"] = self.db_file.name
 
         from app.database.db_manager import initialize_database
-        from auth import authenticate_user, create_user
+        from tests.support import bootstrap_staff
 
         initialize_database()
-        create_user("admin1", "admin-password", "Admin One", "admin")
-        create_user("manager1", "manager-password", "Manager One", "manager")
-        create_user("cashier1", "cashier-password", "Cashier One", "cashier")
-        self.admin_session = authenticate_user("admin1", "admin-password")
-        self.manager_session = authenticate_user("manager1", "manager-password")
-        self.cashier_session = authenticate_user("cashier1", "cashier-password")
+        sessions = bootstrap_staff()
+        self.admin_session = sessions["admin"]
+        self.manager_session = sessions["manager"]
+        self.cashier_session = sessions["cashier"]
 
     def tearDown(self):
         os.environ.pop("CARTHAGE_POS_DB", None)

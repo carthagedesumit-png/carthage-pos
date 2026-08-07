@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="hero">
+    <div>
+        <h1>{{ page_title }}</h1>
+        <p>{{ page_subtitle }}</p>
+        <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <span class="status success">{{ section.title() }} Analytics</span>
+        <a class="hero-link" href="/dashboard/reports">Back to Reports</a>
+    </div>
+</section>
+
+<section class="panel reports-workspace">
+    <form class="filter-form" method="get" action="/dashboard/reports/{{ section }}">
+        <label>
+            <span>Date From</span>
+            <input type="date" name="date_from" value="{{ filters.date_from }}">
+        </label>
+        <label>
+            <span>Date To</span>
+            <input type="date" name="date_to" value="{{ filters.date_to }}">
+        </label>
+        <label>
+            <span>Store ID</span>
+            <input type="number" min="1" name="store_id" value="{{ filters.store_id or '' }}">
+        </label>
+        <label>
+            <span>Cashier ID</span>
+            <input type="number" min="1" name="cashier_id" value="{{ filters.cashier_id or '' }}">
+        </label>
+        <label>
+            <span>Customer ID</span>
+            <input type="number" min="1" name="customer_id" value="{{ filters.customer_id or '' }}">
+        </label>
+        <label>
+            <span>Product ID</span>
+            <input type="number" min="1" name="product_id" value="{{ filters.product_id or '' }}">
+        </label>
+        <label>
+            <span>Category ID</span>
+            <input type="number" min="1" name="category_id" value="{{ filters.category_id or '' }}">
+        </label>
+        <label>
+            <span>Supplier ID</span>
+            <input type="number" min="1" name="supplier_id" value="{{ filters.supplier_id or '' }}">
+        </label>
+        <div class="filter-actions">
+            <button type="submit">Apply Filters</button>
+            <a href="/dashboard/reports/{{ section }}">Reset</a>
+        </div>
+    </form>
+</section>
+
+{% if section == "sales" %}
+<section class="cards">
+    <div class="card accent-blue"><span>Net Sales</span><strong>{{ report.summary.net_sales_display }}</strong></div>
+    <div class="card accent-green"><span>Profit</span><strong>{{ report.summary.estimated_profit_display }}</strong></div>
+    <div class="card accent-amber"><span>Transactions</span><strong>{{ report.summary.transaction_count }}</strong></div>
+    <div class="card accent-red"><span>Refunds</span><strong>{{ report.summary.refund_total_display }}</strong></div>
+</section>
+<section class="panel reports-table-panel">
+    <h2>Top Products</h2>
+    {% set rows = report.top_products %}
+    {% if rows %}
+    <div class="table-scroll"><table class="table report-table"><thead><tr><th>SKU</th><th>Product</th><th>Items Sold</th><th>Revenue</th><th>Profit</th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row.sku }}</td><td>{{ row.name }}</td><td>{{ row.items_sold }}</td><td>{{ row.net_revenue }}</td><td>{{ row.estimated_profit }}</td></tr>{% endfor %}</tbody></table></div>
+    {% else %}<p class="empty-state">No sales report rows are available.</p>{% endif %}
+</section>
+{% elif section == "inventory" %}
+<section class="cards">
+    <div class="card accent-blue"><span>Products</span><strong>{{ report.summary.product_rows }}</strong></div>
+    <div class="card accent-green"><span>Inventory Cost</span><strong>{{ report.valuation.inventory_cost_display }}</strong></div>
+    <div class="card accent-amber"><span>Low Stock</span><strong>{{ report.summary.low_stock }}</strong></div>
+    <div class="card accent-red"><span>Out of Stock</span><strong>{{ report.summary.out_of_stock }}</strong></div>
+</section>
+<section class="panel reports-table-panel">
+    <h2>Inventory Rows</h2>
+    {% if report["items"] %}
+    <div class="table-scroll"><table class="table report-table"><thead><tr><th>SKU</th><th>Product</th><th>Store</th><th>Qty</th><th>Value</th></tr></thead><tbody>{% for row in report["items"] %}<tr><td>{{ row.sku }}</td><td>{{ row.name }}</td><td>{{ row.store }}</td><td>{{ row.quantity_on_hand }}</td><td>{{ row.inventory_value_display }}</td></tr>{% endfor %}</tbody></table></div>
+    {% else %}<p class="empty-state">No inventory report rows are available.</p>{% endif %}
+</section>
+{% elif section == "customers" %}
+<section class="cards">
+    <div class="card accent-blue"><span>Customers</span><strong>{{ report.summary.customer_count }}</strong></div>
+    <div class="card accent-green"><span>Lifetime Value</span><strong>{{ report.summary.lifetime_value_display }}</strong></div>
+    <div class="card accent-amber"><span>Loyalty Points</span><strong>{{ report.summary.loyalty_points }}</strong></div>
+    <div class="card accent-red"><span>Credit</span><strong>{{ report.summary.outstanding_credit_display }}</strong></div>
+</section>
+<section class="panel reports-table-panel">
+    <h2>Customer Rows</h2>
+    {% if report["items"] %}
+    <div class="table-scroll"><table class="table report-table"><thead><tr><th>Code</th><th>Name</th><th>Group</th><th>Lifetime Value</th><th>Credit</th></tr></thead><tbody>{% for row in report["items"] %}<tr><td>{{ row.customer_code }}</td><td>{{ row.name }}</td><td>{{ row.group }}</td><td>{{ row.lifetime_value_display }}</td><td>{{ row.outstanding_credit_display }}</td></tr>{% endfor %}</tbody></table></div>
+    {% else %}<p class="empty-state">No customer report rows are available.</p>{% endif %}
+</section>
+{% elif section == "procurement" %}
+<section class="cards">
+    <div class="card accent-blue"><span>Purchase Orders</span><strong>{{ report.summary.purchase_order_count }}</strong></div>
+    <div class="card accent-green"><span>Estimated Value</span><strong>{{ report.summary.estimated_value_display }}</strong></div>
+    <div class="card accent-amber"><span>Pending</span><strong>{{ report.summary.pending_count }}</strong></div>
+    <div class="card accent-red"><span>Cancelled</span><strong>{{ report.summary.cancelled_count }}</strong></div>
+</section>
+<section class="panel reports-table-panel">
+    <h2>Purchase Order Rows</h2>
+    {% if report["items"] %}
+    <div class="table-scroll"><table class="table report-table"><thead><tr><th>Reference</th><th>Supplier</th><th>Status</th><th>Ordered</th><th>Received</th><th>Value</th></tr></thead><tbody>{% for row in report["items"] %}<tr><td>{{ row.reference_number }}</td><td>{{ row.supplier_name }}</td><td>{{ row.status_label }}</td><td>{{ row.ordered_quantity }}</td><td>{{ row.received_quantity }}</td><td>{{ row.estimated_value_display }}</td></tr>{% endfor %}</tbody></table></div>
+    {% else %}<p class="empty-state">No procurement report rows are available.</p>{% endif %}
+</section>
+{% else %}
+<section class="cards">
+    <div class="card accent-blue"><span>Stores</span><strong>{{ report["items"]|length }}</strong></div>
+    <div class="card accent-green"><span>Report</span><strong>Ready</strong></div>
+    <div class="card accent-amber"><span>Exports</span><strong>Coming Soon</strong></div>
+    <div class="card accent-red"><span>Mode</span><strong>Read Only</strong></div>
+</section>
+<section class="panel reports-table-panel">
+    <h2>Store Rows</h2>
+    {% if report["items"] %}
+    <div class="table-scroll"><table class="table report-table"><thead><tr><th>Code</th><th>Store</th><th>Transactions</th><th>Net Sales</th><th>Inventory</th></tr></thead><tbody>{% for row in report["items"] %}<tr><td>{{ row.store_code }}</td><td>{{ row.store_name }}</td><td>{{ row.transaction_count }}</td><td>{{ row.net_sales }}</td><td>{{ row.inventory_value }}</td></tr>{% endfor %}</tbody></table></div>
+    {% else %}<p class="empty-state">No store report rows are available.</p>{% endif %}
+</section>
+{% endif %}
+
+<section class="panel reports-table-panel">
+    <h2>Export Foundation</h2>
+    <div class="quick-actions label-actions">
+        <a class="disabled-action" href="/dashboard/api/reports/export/csv?report_type={{ section }}">CSV Export Coming Soon</a>
+        <a class="disabled-action" href="/dashboard/api/reports/export/excel?report_type={{ section }}">Excel Export Coming Soon</a>
+        <a class="disabled-action" href="/dashboard/api/reports/export/pdf?report_type={{ section }}">PDF Export Coming Soon</a>
+        <a class="disabled-action" href="/dashboard/api/reports/export/print?report_type={{ section }}">Print Report Coming Soon</a>
+    </div>
+</section>
+
+{% endblock %}

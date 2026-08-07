@@ -1,0 +1,2 @@
+evidence_reference,requirement,environment,operator_role,store_code,performed_at_utc,result,reviewer,notes
+EVIDENCE-EXAMPLE-001,scanner test,isolated training,manager,MAIN,2099-01-01T00:00:00Z,pending,,Fictional example only

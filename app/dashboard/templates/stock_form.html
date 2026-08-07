@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero"><div><h1>{{ title }}</h1><p>{{ product.name }} &middot; Current quantity {{ product.quantity_in_stock }}</p></div><div class="hero-status"><a class="hero-link" href="/dashboard/inventory/products/{{ product.id }}">Cancel</a></div></section>
+<section class="panel form-panel narrow-panel">
+ {% if request.query_params.get('error') %}<div class="alert error" role="alert">{{ request.query_params.get('error') }}</div>{% endif %}
+ <form method="post" action="{{ action }}?csrf_token={{ csrf_token }}" class="management-form">
+  <label><span>Store</span><select name="store_id" required>{% for item in stores %}<option value="{{ item.id }}" {% if store_id == item.id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></label>
+  {% if operation == 'receive' %}<label><span>Quantity received</span><input type="number" min="1" name="quantity" required></label><label><span>Supplier / reference</span><input name="supplier_reference"></label>
+  {% else %}<label><span>Resulting quantity</span><input type="number" min="0" name="new_quantity" value="{{ product.quantity_in_stock }}" required></label><label class="confirmation-check"><input type="checkbox" name="confirmed" value="true"><span>I confirm any negative adjustment</span></label>{% endif %}
+  <label><span>Reason</span><input name="reason" required></label><label><span>Note</span><textarea name="note" rows="3"></textarea></label>
+  <p class="muted">Direct receipt creates a stock movement. Purchase-order deliveries must be received from Procurement.</p>
+  <button class="primary-action" type="submit">{{ title }}</button>
+ </form>
+</section>
+{% endblock %}

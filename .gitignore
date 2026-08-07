@@ -149,6 +149,7 @@ activemq-data/
 
 # Environments
 .env
+.env.*
 .envrc
 .venv
 env/
@@ -223,6 +224,24 @@ __marimo__/
 .venv/
 *.db
 *.sqlite
+*.sqlite3
+backups/
+logs/
+updates/
+rollback/
+licenses/
+config/carthage-pos.env
+config/deployment.json
+config/windows-integration.json
 .vs/
 .idea/
 .vscode/
+release/
+
+# Credentials and generated installer binaries
+*.key
+*.pem
+*.pfx
+*.p12
+*.exe
+*.msi

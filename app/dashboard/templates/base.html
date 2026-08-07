@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="/dashboard/static/css/dashboard.css">
+</head>
+
+<body>
+
+<div class="layout">
+
+    <aside class="sidebar">
+
+        <div class="sidebar-brand">
+            <h2>CBOS</h2>
+            <span>Carthage Business Operating System</span>
+        </div>
+
+        <nav class="sidebar-menu">
+            <a class="{{ 'active' if active_page == 'dashboard' else '' }}" href="/dashboard/" {% if active_page == 'dashboard' %}aria-current="page"{% endif %}>Dashboard</a>
+            <a class="{{ 'active' if active_page == 'executive' else '' }}" href="/dashboard/executive" {% if active_page == 'executive' %}aria-current="page"{% endif %}>Executive</a>
+            <a class="{{ 'active' if active_page == 'sales' else '' }}" href="/dashboard/sales" {% if active_page == 'sales' %}aria-current="page"{% endif %}>Sales</a>
+            <a class="{{ 'active' if active_page == 'inventory' else '' }}" href="/dashboard/inventory" {% if active_page == 'inventory' %}aria-current="page"{% endif %}>Inventory</a>
+            <a class="{{ 'active' if active_page == 'customers' else '' }}" href="/dashboard/customers" {% if active_page == 'customers' %}aria-current="page"{% endif %}>CRM</a>
+            <a class="{{ 'active' if active_page == 'procurement' else '' }}" href="/dashboard/procurement" {% if active_page == 'procurement' %}aria-current="page"{% endif %}>Procurement</a>
+            <a class="{{ 'active' if active_page == 'reports' else '' }}" href="/dashboard/reports" {% if active_page == 'reports' %}aria-current="page"{% endif %}>Reports</a>
+            <a class="{{ 'active' if active_page == 'finance' else '' }}" href="/dashboard/finance" {% if active_page == 'finance' %}aria-current="page"{% endif %}>Finance</a>
+            <a class="{{ 'active' if active_page == 'system' else '' }}" href="/dashboard/system" {% if active_page == 'system' %}aria-current="page"{% endif %}>Administration</a>
+            <a class="placeholder" href="#" aria-disabled="true">Settings</a>
+            <a class="placeholder" href="#" aria-disabled="true">Logout</a>
+        </nav>
+
+    </aside>
+
+    <main class="content">
+        <div class="loading-indicator" id="dashboardLoading" aria-live="polite">Loading...</div>
+        {% block content %}
+        {% endblock %}
+    </main>
+
+</div>
+
+<script src="/dashboard/static/js/dashboard.js"></script>
+
+</body>
+
+</html>

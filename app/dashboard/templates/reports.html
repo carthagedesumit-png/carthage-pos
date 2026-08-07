@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="hero">
+    <div>
+        <h1>{{ page_title }}</h1>
+        <p>{{ page_subtitle }}</p>
+        <small>CBOS &middot; {{ header.store }} &middot; {{ header.user }}</small>
+    </div>
+    <div class="hero-status">
+        <span class="status success">Executive Intelligence</span>
+        <span class="status success">Read Only</span>
+    </div>
+</section>
+
+<section class="cards">
+    {% for card in report.cards %}
+    <div class="card {{ card.accent }}">
+        <span>{{ card.label }}</span>
+        <strong>{{ card.value }}</strong>
+    </div>
+    {% endfor %}
+</section>
+
+<section class="panel reports-workspace">
+    <form class="filter-form" method="get" action="/dashboard/reports">
+        <label>
+            <span>Created From</span>
+            <input type="date" name="date_from" value="{{ filters.date_from }}">
+        </label>
+        <label>
+            <span>Created To</span>
+            <input type="date" name="date_to" value="{{ filters.date_to }}">
+        </label>
+        <label>
+            <span>Store ID</span>
+            <input type="number" min="1" name="store_id" value="{{ filters.store_id or '' }}">
+        </label>
+        <label>
+            <span>Cashier ID</span>
+            <input type="number" min="1" name="cashier_id" value="{{ filters.cashier_id or '' }}">
+        </label>
+        <label>
+            <span>Customer ID</span>
+            <input type="number" min="1" name="customer_id" value="{{ filters.customer_id or '' }}">
+        </label>
+        <label>
+            <span>Product ID</span>
+            <input type="number" min="1" name="product_id" value="{{ filters.product_id or '' }}">
+        </label>
+        <label>
+            <span>Category ID</span>
+            <input type="number" min="1" name="category_id" value="{{ filters.category_id or '' }}">
+        </label>
+        <label>
+            <span>Supplier ID</span>
+            <input type="number" min="1" name="supplier_id" value="{{ filters.supplier_id or '' }}">
+        </label>
+        <label>
+            <span>Report Type</span>
+            <select name="report_type">
+                {% for option in report_types %}
+                <option value="{{ option }}" {% if filters.report_type == option %}selected{% endif %}>{{ option.title() }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <div class="filter-actions">
+            <button type="submit">Apply Filters</button>
+            <a href="/dashboard/reports">Reset</a>
+        </div>
+    </form>
+</section>
+
+<section class="reports-nav">
+    <a href="/dashboard/reports/sales">Sales Summary</a>
+    <a href="/dashboard/reports/inventory">Inventory Valuation</a>
+    <a href="/dashboard/reports/customers">Customer Performance</a>
+    <a href="/dashboard/reports/procurement">Procurement Summary</a>
+    <a href="/dashboard/reports/stores">Store Performance</a>
+</section>
+
+<section class="dashboard-grid report-grid">
+    <div class="panel">
+        <div class="panel-heading">
+            <div>
+                <h2>Sales Summary</h2>
+                <p class="muted">{{ report.sales.summary.transaction_count }} transactions &middot; {{ report.sales.summary.items_sold }} items</p>
+            </div>
+            <span class="status success">{{ report.sales.summary.net_sales_display }} net</span>
+        </div>
+        <div class="detail-list compact-detail-list">
+            <span>Gross Sales <strong>{{ report.sales.summary.gross_sales_display }}</strong></span>
+            <span>Discounts <strong>{{ report.sales.summary.discount_total_display }}</strong></span>
+            <span>Refunds <strong>{{ report.sales.summary.refund_total_display }}</strong></span>
+            <span>Estimated Profit <strong>{{ report.sales.summary.estimated_profit_display }}</strong></span>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-heading">
+            <div>
+                <h2>Product Performance</h2>
+                <p class="muted">Top sales and slow-moving product signals</p>
+            </div>
+        </div>
+        {% if report.products.performance.best_selling_products %}
+        <div class="ranking-list">
+            {% for product in report.products.performance.best_selling_products[:4] %}
+            <div class="ranking-item">
+                <span>{{ product.name }}</span>
+                <small>{{ product.items_sold }} sold &middot; {{ product.net_revenue_display or product.net_revenue }}</small>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No product performance activity is available.</p>
+        {% endif %}
+    </div>
+</section>
+
+<section class="dashboard-grid report-grid">
+    <div class="panel">
+        <div class="panel-heading">
+            <div>
+                <h2>Cashier Performance</h2>
+                <p class="muted">{{ report.cashiers["items"]|length }} cashier rows</p>
+            </div>
+        </div>
+        {% if report.cashiers["items"] %}
+        <div class="table-scroll">
+            <table class="table report-table">
+                <thead><tr><th>Cashier</th><th>Transactions</th><th>Net Sales</th><th>Profit</th></tr></thead>
+                <tbody>
+                    {% for cashier in report.cashiers["items"][:5] %}
+                    <tr>
+                        <td>{{ cashier.full_name or cashier.username or "system" }}</td>
+                        <td>{{ cashier.transaction_count }}</td>
+                        <td>{{ cashier.net_sales_display or cashier.net_sales }}</td>
+                        <td>{{ cashier.estimated_profit_display or cashier.estimated_profit }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="empty-state">No cashier performance activity is available.</p>
+        {% endif %}
+    </div>
+
+    <div class="panel">
+        <div class="panel-heading">
+            <div>
+                <h2>Store Performance</h2>
+                <p class="muted">{{ report.stores["items"]|length }} store rows</p>
+            </div>
+        </div>
+        {% if report.stores["items"] %}
+        <div class="detail-list compact-detail-list">
+            {% for store in report.stores["items"][:5] %}
+            <span>{{ store.store_name }} <strong>{{ store.net_sales_display or store.net_sales }}</strong></span>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No store performance activity is available.</p>
+        {% endif %}
+    </div>
+</section>
+
+<section class="dashboard-grid report-grid">
+    <div class="panel">
+        <h2>Customer Performance</h2>
+        <div class="detail-list compact-detail-list">
+            <span>Customers <strong>{{ report.customers.summary.customer_count }}</strong></span>
+            <span>Lifetime Value <strong>{{ report.customers.summary.lifetime_value_display }}</strong></span>
+            <span>Outstanding Credit <strong>{{ report.customers.summary.outstanding_credit_display }}</strong></span>
+            <span>Loyalty Points <strong>{{ report.customers.summary.loyalty_points }}</strong></span>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Inventory Valuation</h2>
+        <div class="detail-list compact-detail-list">
+            <span>Total Units <strong>{{ report.inventory.valuation.total_units }}</strong></span>
+            <span>Inventory Cost <strong>{{ report.inventory.valuation.inventory_cost_display }}</strong></span>
+            <span>Retail Value <strong>{{ report.inventory.valuation.inventory_retail_display }}</strong></span>
+            <span>Potential Profit <strong>{{ report.inventory.valuation.potential_profit_display }}</strong></span>
+        </div>
+    </div>
+</section>
+
+<section class="dashboard-grid report-grid">
+    <div class="panel">
+        <h2>Procurement Summary</h2>
+        <div class="detail-list compact-detail-list">
+            <span>Purchase Orders <strong>{{ report.procurement.summary.purchase_order_count }}</strong></span>
+            <span>Pending Receipt <strong>{{ report.procurement.summary.pending_count }}</strong></span>
+            <span>Partially Received <strong>{{ report.procurement.summary.partial_count }}</strong></span>
+            <span>Estimated Value <strong>{{ report.procurement.summary.estimated_value_display }}</strong></span>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Refund Summary</h2>
+        <div class="detail-list compact-detail-list">
+            <span>Refund Count <strong>{{ report.refunds.summary.refund_count }}</strong></span>
+            <span>Refund Total <strong>{{ report.refunds.summary.refund_total_display }}</strong></span>
+            <span>Export Status <strong>Coming Soon</strong></span>
+            <span>Generated <strong>{{ report.generated_at }}</strong></span>
+        </div>
+    </div>
+</section>
+
+<section class="panel reports-table-panel">
+    <div class="panel-heading">
+        <div>
+            <h2>Export Foundation</h2>
+            <p class="muted">CSV, Excel, PDF, and print actions are route-ready placeholders.</p>
+        </div>
+    </div>
+    <div class="quick-actions label-actions">
+        <a class="disabled-action" href="/dashboard/api/reports/export/csv">CSV Export Coming Soon</a>
+        <a class="disabled-action" href="/dashboard/api/reports/export/excel">Excel Export Coming Soon</a>
+        <a class="disabled-action" href="/dashboard/api/reports/export/pdf">PDF Export Coming Soon</a>
+        <a class="disabled-action" href="/dashboard/api/reports/export/print">Print Report Coming Soon</a>
+    </div>
+</section>
+
+{% endblock %}

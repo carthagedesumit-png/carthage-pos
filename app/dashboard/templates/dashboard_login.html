@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero"><div><h1>Dashboard Sign In</h1><p>Use your CBOS account to access authorized management actions.</p></div></section>
+<section class="panel form-panel narrow-panel">
+  {% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="/dashboard/login?csrf_token={{ csrf_token }}{% if next %}&amp;next={{ next|urlencode }}{% endif %}" class="management-form">
+    <label><span>Username</span><input name="username" required autocomplete="username"></label>
+    <label><span>Password</span><input type="password" name="password" required autocomplete="current-password"></label>
+    <label><span>Store ID (optional)</span><input type="number" min="1" name="store_id"></label>
+    <button class="primary-action" type="submit">Sign In</button>
+  </form>
+</section>
+{% endblock %}
